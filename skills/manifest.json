@@ -1,0 +1,41 @@
+{
+  "project": "ToolScanIP",
+  "description": "ARP-based network scanner with terminal UI, web dashboard, and nginx reverse-proxy for Luckfox IoT devices.",
+  "skills": [
+    {
+      "name": "build",
+      "description": "Compile the scanner natively (x86_64) or cross-compile for Raspberry Pi (ARM).",
+      "path": "skills/build/SKILL.md"
+    },
+    {
+      "name": "deploy-pi",
+      "description": "Upload the binary to the Pi via SCP and launch the full nginx proxy stack.",
+      "path": "skills/deploy-pi/SKILL.md"
+    },
+    {
+      "name": "web-ui",
+      "description": "Edit the browser dashboard (scanner.html), embed it into the binary, and extend HTTP routes.",
+      "path": "skills/web-ui/SKILL.md"
+    },
+    {
+      "name": "comments",
+      "description": "Manage persistent host labels in ~/.ipscanner.comments by IP or MAC address.",
+      "path": "skills/comments/SKILL.md"
+    },
+    {
+      "name": "probe",
+      "description": "Add or tune active probing methods (SSH banner, HTTP, mDNS) used for vendor identification.",
+      "path": "skills/probe/SKILL.md"
+    },
+    {
+      "name": "arp-scan",
+      "description": "Understand and extend the raw ARP scanner, parallel resolver, and OUI lookup engine.",
+      "path": "skills/arp-scan/SKILL.md"
+    },
+    {
+      "name": "nginx-proxy",
+      "description": "Generate and manage nginx reverse-proxy configs that expose Luckfox device UIs remotely.",
+      "path": "skills/nginx-proxy/SKILL.md"
+    }
+  ]
+}
