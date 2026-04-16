@@ -7,7 +7,12 @@ IFACE="${1:-eth0}"
 JSON_TMP="/tmp/ipscan_result.json"
 NGINX_PROXY="/etc/nginx/conf.d/ipscan-proxy.conf"
 NGINX_LANDING="/etc/nginx/conf.d/ipscan-landing.conf"
+NGINX_SCANNER="/etc/nginx/conf.d/ipscan-scanner.conf"
 WEBROOT="/var/www/ipscan"
+
+# Internal port ipscanner listens on (nginx proxies this to public port 8080)
+SCANNER_INTERNAL_PORT=8181
+SCANNER_PUBLIC_PORT=8080
 
 # ── 1. Scan network ───────────────────────────────────────────────────────────
 echo "[1/4] Scanning $IFACE ..."
@@ -141,7 +146,8 @@ a:hover{{text-decoration:underline}}
 <body>
 <h1>&#127760; Device Dashboard</h1>
 <div class="sub">Last scan: {now} &nbsp;|&nbsp; {total} host(s) total</div>
-<a class="btn" href="/rescan">&#8635; Rescan</a>
+<button class="btn" id="rescanBtn" onclick="doRescan()">&#8635; Rescan</button>
+<a class="btn" href="http://placeholder:$SCANNER_PUBLIC_PORT/" id="scannerLink" style="margin-left:8px">&#128269; Live Scanner</a>
 
 <h2>&#9679; Luckfox Devices ({ndev})</h2>
 <table>
@@ -158,6 +164,23 @@ a:hover{{text-decoration:underline}}
 </table>
 
 <script>
+// Fix Live Scanner link with actual hostname
+document.getElementById('scannerLink').href = 'http://' + location.hostname + ':$SCANNER_PUBLIC_PORT/';
+
+// Rescan: call /rescan then reload page
+function doRescan() {{
+    var btn = document.getElementById('rescanBtn');
+    btn.disabled = true;
+    btn.textContent = '⏳ Scanning...';
+    fetch('/rescan')
+        .then(function() {{ location.reload(); }})
+        .catch(function() {{
+            btn.disabled = false;
+            btn.innerHTML = '&#8635; Rescan';
+            alert('Rescan failed — is ipscanner running?');
+        }});
+}}
+
 document.querySelectorAll('tr[data-port]').forEach(function(row) {{
     var port = row.getAttribute('data-port');
     var url  = 'http://' + location.hostname + ':' + port + '/';
@@ -179,27 +202,68 @@ with open('$WEBROOT/index.html', 'w') as f:
 print("  Landing page written to $WEBROOT/index.html")
 PYEOF
 
-# ── 4. Ensure landing page nginx block exists ─────────────────────────────────
-if [ ! -f "$NGINX_LANDING" ]; then
-    cat > "$NGINX_LANDING" << EOF
+# ── 4. Write landing page nginx block (always overwrite to keep in sync) ──────
+cat > "$NGINX_LANDING" << EOF
 server {
     listen 80 default_server;
     server_name _;
     root $WEBROOT;
     index index.html;
+
+    # Proxy dynamic routes to the live ipscanner daemon
+    location /rescan {
+        proxy_pass http://127.0.0.1:$SCANNER_INTERNAL_PORT/rescan;
+        proxy_read_timeout 120s;
+    }
+    location /regen {
+        proxy_pass http://127.0.0.1:$SCANNER_INTERNAL_PORT/regen;
+        proxy_read_timeout 120s;
+    }
+    location /api/scan {
+        proxy_pass http://127.0.0.1:$SCANNER_INTERNAL_PORT/api/scan;
+        proxy_read_timeout 120s;
+    }
 }
 EOF
-    echo "  Landing page nginx block created."
-fi
+echo "  Landing page nginx block updated."
 
-# ── 5. Test and reload nginx ──────────────────────────────────────────────────
-echo "[4/4] Reloading nginx ..."
+# ── 5. Start ipscanner web daemon (internal port, nginx proxies it) ───────────
+echo "[5/5] Starting ipscanner web daemon ..."
+
+# Kill any existing ipscanner web process
+pkill -f "ipscanner.*-w" 2>/dev/null && echo "  Stopped old ipscanner daemon."
+sleep 1
+
+# Start ipscanner on internal port in background
+nohup "$SCANNER" -i "$IFACE" -w "$SCANNER_INTERNAL_PORT" \
+    > /tmp/ipscanner-web.log 2>&1 &
+echo "  ipscanner started on internal port $SCANNER_INTERNAL_PORT (PID $!)"
+echo "  Log: /tmp/ipscanner-web.log"
+
+# Write nginx proxy block for scanner UI
+cat > "$NGINX_SCANNER" << EOF
+server {
+    listen $SCANNER_PUBLIC_PORT;
+    server_name _;
+    location / {
+        proxy_pass         http://127.0.0.1:$SCANNER_INTERNAL_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header   Host \$host;
+        proxy_read_timeout 120s;
+    }
+}
+EOF
+echo "  Scanner UI nginx block: port $SCANNER_PUBLIC_PORT -> localhost:$SCANNER_INTERNAL_PORT"
+
+# ── 6. Test and reload nginx ──────────────────────────────────────────────────
+echo "[6/6] Reloading nginx ..."
 nginx -t && systemctl reload nginx
 
 PI_IP=$(hostname -I | awk '{print $1}')
 echo ""
 echo "Done! Open in browser:"
-echo "  http://$PI_IP/          <- Dashboard"
+echo "  http://$PI_IP/                   <- Device Dashboard"
+echo "  http://$PI_IP:$SCANNER_PUBLIC_PORT/       <- Live Scanner UI"
 python3 << PYEOF
 import json
 with open('$JSON_TMP') as f:
@@ -208,6 +272,6 @@ for h in hosts:
     c = h.get('comment','')
     if 'Line' in c and '[GM' in c:
         last = int(h['ip'].split('.')[-1])
-        print("  http://$(hostname -I | awk '{print \$1}'):{port}/  ->  {ip}  ({c})".format(
+        print("  http://$PI_IP:{port}/  ->  {ip}  ({c})".format(
             port=9000+last, ip=h['ip'], c=c))
 PYEOF

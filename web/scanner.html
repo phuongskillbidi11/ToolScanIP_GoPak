@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IP Scanner</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #f5f5f5;
+  min-height: 100vh;
+  color: #111827;
+  font-size: 14px;
+}
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+.header {
+  background: #fff;
+  border-bottom: 1px solid #e0e0e0;
+  padding: 0 24px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: 0 1px 3px rgba(0,0,0,.08);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.header-logo {
+  width: 32px;
+  height: 32px;
+  background: #2563eb;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 16px;
+}
+
+.header-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.header-sub {
+  font-size: 12px;
+  color: #6b7280;
+  margin-left: 4px;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.badge-iface {
+  background: #eff6ff;
+  color: #2563eb;
+  border: 1px solid #bfdbfe;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: background .15s;
+  font-family: inherit;
+}
+
+.btn-primary {
+  background: #2563eb;
+  color: #fff;
+}
+.btn-primary:hover { background: #1d4ed8; }
+.btn-primary:disabled { background: #93c5fd; cursor: not-allowed; }
+
+/* ── Main layout ─────────────────────────────────────────────────────────── */
+.main { padding: 24px; max-width: 1400px; margin: 0 auto; }
+
+/* ── Stats cards ─────────────────────────────────────────────────────────── */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.stat-card {
+  background: #fff;
+  border-radius: 10px;
+  padding: 18px 20px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.08);
+  border: 1px solid #e5e7eb;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.stat-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.stat-icon.blue   { background: #eff6ff; color: #2563eb; }
+.stat-icon.green  { background: #f0fdf4; color: #16a34a; }
+.stat-icon.purple { background: #faf5ff; color: #7c3aed; }
+.stat-icon.orange { background: #fff7ed; color: #ea580c; }
+
+.stat-num  { font-size: 26px; font-weight: 700; line-height: 1; }
+.stat-label{ font-size: 12px; color: #6b7280; margin-top: 2px; }
+
+/* ── Card ────────────────────────────────────────────────────────────────── */
+.card {
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.08);
+  border: 1px solid #e5e7eb;
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+
+.card-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid #e5e7eb;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.card-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #111827;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.card-title i { color: #2563eb; }
+
+/* ── Table ───────────────────────────────────────────────────────────────── */
+.table-wrap { overflow-x: auto; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+thead th {
+  background: #f9fafb;
+  padding: 10px 16px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: #6b7280;
+  border-bottom: 1px solid #e5e7eb;
+  white-space: nowrap;
+}
+
+tbody td {
+  padding: 12px 16px;
+  border-bottom: 1px solid #f3f4f6;
+  vertical-align: middle;
+}
+
+tbody tr:last-child td { border-bottom: none; }
+
+tbody tr {
+  cursor: pointer;
+  transition: background .12s;
+}
+
+tbody tr:hover    { background: #f9fafb; }
+tbody tr.selected { background: #eff6ff; }
+
+.td-num { color: #9ca3af; font-size: 12px; width: 40px; text-align: right; }
+
+.status-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: #16a34a;
+  display: inline-block;
+  box-shadow: 0 0 0 3px #dcfce7;
+}
+
+.td-ip {
+  font-weight: 700;
+  color: #2563eb;
+  font-size: 13px;
+}
+
+.td-hostname { color: #374151; }
+
+.td-vendor {
+  color: #6b7280;
+  font-size: 12px;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.td-mac {
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+.tag-comment {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #f5f3ff;
+  color: #7c3aed;
+  border: 1px solid #ede9fe;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.tag-luckfox {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #fef3c7;
+  color: #d97706;
+  border: 1px solid #fde68a;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  margin-left: 4px;
+}
+
+/* ── SSH Panel ───────────────────────────────────────────────────────────── */
+.ssh-panel {
+  display: none;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.08);
+  border: 1px solid #e5e7eb;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.ssh-panel-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #111827;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ssh-panel-title i { color: #2563eb; }
+
+.ssh-host-info {
+  font-size: 12px;
+  color: #6b7280;
+  margin-bottom: 10px;
+}
+
+.ssh-cmd-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.ssh-cmd-box {
+  flex: 1;
+  background: #1e1e2e;
+  color: #a6e3a1;
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  padding: 10px 16px;
+  border-radius: 8px;
+  word-break: break-all;
+  min-width: 200px;
+}
+
+.btn-copy {
+  background: #f3f4f6;
+  color: #374151;
+  border: 1px solid #d1d5db;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: inherit;
+  transition: background .12s;
+}
+
+.btn-copy:hover  { background: #e5e7eb; }
+.btn-copy.copied { background: #f0fdf4; color: #16a34a; border-color: #86efac; }
+
+/* ── Scan time footer ────────────────────────────────────────────────────── */
+.scan-footer {
+  font-size: 12px;
+  color: #9ca3af;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ── Spinner ─────────────────────────────────────────────────────────────── */
+.fa-spin-custom {
+  animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.err {
+  color: #dc2626;
+  font-size: 13px;
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div class="header-left">
+    <div class="header-logo"><i class="fa-solid fa-network-wired"></i></div>
+    <span class="header-title">IP Scanner</span>
+    <span class="header-sub">ARP Network Discovery</span>
+  </div>
+  <div class="header-right">
+    <span class="badge-iface" id="badge-iface"><i class="fa-solid fa-ethernet"></i> &nbsp;—</span>
+    <button class="btn btn-primary" id="btn-rescan" onclick="rescan()">
+      <i class="fa-solid fa-rotate" id="rescan-icon"></i> Rescan
+    </button>
+  </div>
+</div>
+
+<!-- Main -->
+<div class="main">
+
+  <!-- Stats -->
+  <div class="stats">
+    <div class="stat-card">
+      <div class="stat-icon blue"><i class="fa-solid fa-server"></i></div>
+      <div>
+        <div class="stat-num" id="stat-total">—</div>
+        <div class="stat-label">Total Hosts</div>
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon green"><i class="fa-solid fa-circle-check"></i></div>
+      <div>
+        <div class="stat-num" id="stat-online">—</div>
+        <div class="stat-label">Online</div>
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon purple"><i class="fa-solid fa-microchip"></i></div>
+      <div>
+        <div class="stat-num" id="stat-luckfox">—</div>
+        <div class="stat-label">Luckfox Nodes</div>
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon orange"><i class="fa-solid fa-clock-rotate-left"></i></div>
+      <div>
+        <div class="stat-num" id="stat-time" style="font-size:14px;margin-top:4px">—</div>
+        <div class="stat-label">Last Scan</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SSH panel (shown on row select) -->
+  <div class="ssh-panel" id="ssh-panel">
+    <div class="ssh-panel-title">
+      <i class="fa-solid fa-terminal"></i> SSH Connect
+    </div>
+    <div class="ssh-host-info" id="ssh-host-info"></div>
+    <div class="ssh-cmd-row">
+      <div class="ssh-cmd-box" id="ssh-cmd-box"></div>
+      <button class="btn-copy" id="btn-copy" onclick="copyCmd()">
+        <i class="fa-regular fa-copy"></i> Copy
+      </button>
+    </div>
+  </div>
+
+  <!-- Hosts table -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">
+        <i class="fa-solid fa-list"></i> Host List
+      </div>
+      <div class="scan-footer" id="scan-footer">
+        <i class="fa-solid fa-circle-notch fa-spin-custom" id="spinner"></i>
+        <span id="scan-footer-text">Loading...</span>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:40px">#</th>
+            <th style="width:40px"><i class="fa-solid fa-circle-dot"></i></th>
+            <th><i class="fa-solid fa-desktop"></i>&nbsp; Hostname</th>
+            <th><i class="fa-solid fa-globe"></i>&nbsp; IP Address</th>
+            <th><i class="fa-solid fa-building"></i>&nbsp; Manufacturer</th>
+            <th><i class="fa-solid fa-id-card"></i>&nbsp; MAC Address</th>
+            <th><i class="fa-solid fa-tag"></i>&nbsp; Comments</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="err" id="err"></div>
+
+</div><!-- /main -->
+
+<script>
+var selectedIdx = -1;
+
+function isLuckfox(comment) {
+  return comment && comment.indexOf('Line') !== -1 && comment.indexOf('[GM') !== -1;
+}
+
+function renderTable(hosts) {
+  var tbody = document.getElementById('tbody');
+  tbody.innerHTML = '';
+  hosts.forEach(function(h, i) {
+    var lk = isLuckfox(h.comment);
+    var tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td class="td-num">' + (i+1) + '</td>' +
+      '<td><span class="status-dot"></span></td>' +
+      '<td class="td-hostname"><i class="fa-solid fa-computer" style="color:#d1d5db;margin-right:6px"></i>' + escHtml(h.hostname) + '</td>' +
+      '<td class="td-ip">' + escHtml(h.ip) + '</td>' +
+      '<td class="td-vendor">' + escHtml(h.vendor) + '</td>' +
+      '<td class="td-mac">' + escHtml(h.mac) + '</td>' +
+      '<td>' +
+        (h.comment
+          ? '<span class="tag-comment"><i class="fa-solid fa-tag"></i>' + escHtml(h.comment) + '</span>'
+          : '<span style="color:#d1d5db">—</span>') +
+        (lk ? '<span class="tag-luckfox"><i class="fa-solid fa-bolt"></i>luckfox</span>' : '') +
+      '</td>';
+    tr.onclick = function() { selectRow(i, h, tr); };
+    tbody.appendChild(tr);
+  });
+}
+
+function selectRow(idx, h, tr) {
+  document.querySelectorAll('tbody tr').forEach(function(r){ r.classList.remove('selected'); });
+  if (selectedIdx === idx) {
+    selectedIdx = -1;
+    document.getElementById('ssh-panel').style.display = 'none';
+    return;
+  }
+  selectedIdx = idx;
+  tr.classList.add('selected');
+
+  var lk = isLuckfox(h.comment);
+  var cmd = lk
+    ? 'sshpass -p luckfox ssh root@' + h.ip
+    : 'ssh root@' + h.ip;
+
+  document.getElementById('ssh-cmd-box').textContent = cmd;
+  document.getElementById('ssh-host-info').innerHTML =
+    '<i class="fa-solid fa-location-dot"></i>&nbsp;' + h.ip +
+    (h.comment ? '&nbsp;&nbsp;<i class="fa-solid fa-tag"></i>&nbsp;' + escHtml(h.comment) : '') +
+    (lk ? '&nbsp;&nbsp;<i class="fa-solid fa-bolt" style="color:#d97706"></i>&nbsp;Auto-login enabled' : '');
+
+  document.getElementById('ssh-panel').style.display = 'block';
+  var cb = document.getElementById('btn-copy');
+  cb.innerHTML = '<i class="fa-regular fa-copy"></i> Copy';
+  cb.className = 'btn-copy';
+}
+
+function copyCmd() {
+  var cmd = document.getElementById('ssh-cmd-box').textContent;
+  navigator.clipboard.writeText(cmd).then(function() {
+    var cb = document.getElementById('btn-copy');
+    cb.innerHTML = '<i class="fa-solid fa-check"></i> Copied!';
+    cb.className = 'btn-copy copied';
+    setTimeout(function(){ cb.innerHTML='<i class="fa-regular fa-copy"></i> Copy'; cb.className='btn-copy'; }, 2000);
+  });
+}
+
+function setLoading(on) {
+  var icon = document.getElementById('rescan-icon');
+  var btn  = document.getElementById('btn-rescan');
+  var spin = document.getElementById('spinner');
+  icon.className = on ? 'fa-solid fa-rotate fa-spin-custom' : 'fa-solid fa-rotate';
+  btn.disabled   = on;
+  spin.style.display = on ? '' : 'none';
+}
+
+function load() {
+  setLoading(true);
+  fetch('/api/scan')
+    .then(function(r){ return r.json(); })
+    .then(function(data) {
+      document.getElementById('badge-iface').innerHTML =
+        '<i class="fa-solid fa-ethernet"></i>&nbsp;' + data.iface;
+      document.getElementById('stat-total').textContent   = data.count;
+      document.getElementById('stat-online').textContent  = data.hosts.filter(function(h){ return h.online; }).length;
+      document.getElementById('stat-luckfox').textContent = data.hosts.filter(function(h){ return isLuckfox(h.comment); }).length;
+      document.getElementById('stat-time').textContent    = data.last_scan;
+      document.getElementById('scan-footer-text').textContent = data.count + ' host(s) found';
+      renderTable(data.hosts);
+      document.getElementById('err').textContent = '';
+    })
+    .catch(function(e) {
+      document.getElementById('err').innerHTML =
+        '<i class="fa-solid fa-triangle-exclamation"></i> Error: ' + e;
+    })
+    .finally(function(){ setLoading(false); });
+}
+
+function rescan() {
+  setLoading(true);
+  document.getElementById('scan-footer-text').textContent = 'Scanning...';
+  fetch('/rescan')
+    .then(function(){ return load(); })
+    .catch(function(e) {
+      document.getElementById('err').innerHTML =
+        '<i class="fa-solid fa-triangle-exclamation"></i> Rescan error: ' + e;
+      setLoading(false);
+    });
+}
+
+function escHtml(s) {
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// Hide spinner initially
+document.getElementById('spinner').style.display = 'none';
+load();
+</script>
+</body>
+</html>

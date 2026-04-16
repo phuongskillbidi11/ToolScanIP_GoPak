@@ -1,0 +1,13 @@
+# Build artifacts
+build/
+
+# Local deploy config (contains password — do not commit)
+local.mk
+
+# Auto-generated from web/scanner.html
+src/scanner_html.h
+
+# Backup / temp files
+*.bak
+*~
+/tmp/

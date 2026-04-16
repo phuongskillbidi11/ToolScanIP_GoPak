@@ -63,8 +63,9 @@ $(PI_TARGET): $(PI_OBJS)
 deploy: $(PI_TARGET)
 	@echo "  Uploading to $(PI_HOST):$(PI_DIR) ..."
 	ssh $(PI_HOST) "mkdir -p $(PI_DIR)"
-	scp $(PI_TARGET) $(PI_HOST):$(PI_DIR)/ipscanner
-	scp gen-nginx.sh  $(PI_HOST):$(PI_DIR)/gen-nginx.sh
+	scp $(PI_TARGET)         $(PI_HOST):/tmp/ipscanner_new
+	ssh $(PI_HOST) "mv /tmp/ipscanner_new $(PI_DIR)/ipscanner && chmod +x $(PI_DIR)/ipscanner"
+	scp scripts/gen-nginx.sh $(PI_HOST):$(PI_DIR)/gen-nginx.sh
 	ssh $(PI_HOST) "chmod +x $(PI_DIR)/gen-nginx.sh"
 	@echo ""
 	@echo "  Done. On the Pi:"

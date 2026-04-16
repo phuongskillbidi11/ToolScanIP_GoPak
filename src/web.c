@@ -13,13 +13,16 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
+/* Embedded HTML — generated at build time by:
+ *   xxd -i web/scanner.html | sed ... > src/scanner_html.h  */
+#include "scanner_html.h"
+
 /* ── Shared state ────────────────────────────────────────────────────────── */
 
 static ScanResult g_result;
 static char       g_iface[64];
 static char       g_comments_file[256];
-static char       g_ssh_user[64];
-static char       g_last_scan[64];   /* human-readable timestamp */
+static char       g_last_scan[64];
 
 static void do_scan(void)
 {
@@ -38,7 +41,6 @@ static void do_scan(void)
 
 /* ── HTTP helpers ────────────────────────────────────────────────────────── */
 
-/* Write a string to fd, ignoring partial-write edge cases on local sockets */
 static void wstr(int fd, const char *s)
 {
     size_t len = strlen(s);
@@ -50,12 +52,11 @@ static void wstr(int fd, const char *s)
     }
 }
 
-/* printf-style write to fd via a stack buffer */
 static void wfmt(int fd, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));
 static void wfmt(int fd, const char *fmt, ...)
 {
-    char buf[1024];
+    char buf[2048];
     va_list ap;
     va_start(ap, fmt);
     vsnprintf(buf, sizeof(buf), fmt, ap);
@@ -63,198 +64,84 @@ static void wfmt(int fd, const char *fmt, ...)
     wstr(fd, buf);
 }
 
-/* ── HTML page ───────────────────────────────────────────────────────────── */
+/* ── JSON helpers ────────────────────────────────────────────────────────── */
 
-static const char *HTML_HEAD =
-"<!DOCTYPE html>\n"
-"<html lang=\"en\">\n"
-"<head>\n"
-"<meta charset=\"utf-8\">\n"
-"<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n"
-"<title>IP Scanner</title>\n"
-"<style>\n"
-"*{box-sizing:border-box;margin:0;padding:0}\n"
-"body{font-family:'Courier New',monospace;background:#1e1e2e;color:#cdd6f4;"
-     "padding:24px;font-size:14px}\n"
-"h1{color:#89b4fa;font-size:22px;margin-bottom:4px}\n"
-".subtitle{color:#6c7086;font-size:12px;margin-bottom:20px}\n"
-".topbar{display:flex;align-items:center;gap:12px;margin-bottom:20px}\n"
-".btn{background:#89b4fa;color:#1e1e2e;border:none;padding:7px 18px;"
-     "border-radius:6px;font-family:inherit;font-size:13px;cursor:pointer;"
-     "font-weight:bold;text-decoration:none;display:inline-block}\n"
-".btn:hover{background:#74c7ec}\n"
-".btn-rescan{background:#a6e3a1;color:#1e1e2e}\n"
-".btn-rescan:hover{background:#94e2d5}\n"
-"table{width:100%;border-collapse:collapse;background:#181825;"
-      "border-radius:10px;overflow:hidden;box-shadow:0 2px 16px #00000066}\n"
-"thead tr{background:#313244}\n"
-"th{padding:10px 14px;color:#89b4fa;font-weight:bold;text-align:left;"
-   "font-size:12px;text-transform:uppercase;letter-spacing:.05em}\n"
-"td{padding:9px 14px;border-bottom:1px solid #313244;vertical-align:middle}\n"
-"tr:last-child td{border-bottom:none}\n"
-"tbody tr{cursor:pointer;transition:background .15s}\n"
-"tbody tr:hover{background:#313244}\n"
-"tbody tr.selected{background:#45475a}\n"
-".dot{color:#a6e3a1;font-size:16px}\n"
-".num{color:#6c7086;text-align:right;width:36px}\n"
-".ip{color:#f9e2af;font-weight:bold}\n"
-".mac{color:#6c7086;font-size:12px}\n"
-".vendor{color:#cdd6f4}\n"
-".comment{color:#cba6f7}\n"
-".hostname{color:#cdd6f4}\n"
-".ssh-panel{margin-top:20px;background:#181825;border:1px solid #313244;"
-           "border-radius:8px;padding:16px;display:none}\n"
-".ssh-panel h3{color:#89b4fa;margin-bottom:10px;font-size:14px}\n"
-".ssh-box{display:flex;align-items:center;gap:10px;flex-wrap:wrap}\n"
-".ssh-cmd{background:#313244;color:#a6e3a1;padding:8px 14px;"
-         "border-radius:6px;font-family:inherit;font-size:13px;"
-         "flex:1;word-break:break-all}\n"
-".copy-btn{background:#313244;color:#cdd6f4;border:1px solid #45475a;"
-          "padding:7px 14px;border-radius:6px;font-family:inherit;"
-          "font-size:12px;cursor:pointer}\n"
-".copy-btn:hover{background:#45475a}\n"
-".copy-btn.copied{color:#a6e3a1;border-color:#a6e3a1}\n"
-".info{color:#6c7086;font-size:12px;margin-top:8px}\n"
-".luckfox-badge{background:#cba6f7;color:#1e1e2e;font-size:10px;"
-               "padding:2px 6px;border-radius:4px;margin-left:6px;"
-               "font-weight:bold;vertical-align:middle}\n"
-"</style>\n"
-"</head>\n"
-"<body>\n";
-
-static const char *HTML_FOOT =
-"<script>\n"
-"var sel=-1;\n"
-"function pick(n,ip,comment,autopass){\n"
-"  var rows=document.querySelectorAll('tbody tr');\n"
-"  rows.forEach(function(r){r.classList.remove('selected');});\n"
-"  if(sel===n){sel=-1;document.getElementById('ssh-panel').style.display='none';return;}\n"
-"  sel=n;\n"
-"  rows[n].classList.add('selected');\n"
-"  var cmd=autopass\n"
-"    ?'sshpass -p luckfox ssh root@'+ip\n"
-"    :'ssh root@'+ip;\n"
-"  document.getElementById('ssh-cmd-text').textContent=cmd;\n"
-"  document.getElementById('host-info').textContent='Host: '+ip+(comment?' — '+comment:'');\n"
-"  document.getElementById('ssh-panel').style.display='block';\n"
-"  var cb=document.getElementById('copy-btn');\n"
-"  cb.textContent='Copy';\n"
-"  cb.className='copy-btn';\n"
-"}\n"
-"function copyCmd(){\n"
-"  var cmd=document.getElementById('ssh-cmd-text').textContent;\n"
-"  navigator.clipboard.writeText(cmd).then(function(){\n"
-"    var cb=document.getElementById('copy-btn');\n"
-"    cb.textContent='Copied!';\n"
-"    cb.className='copy-btn copied';\n"
-"    setTimeout(function(){cb.textContent='Copy';cb.className='copy-btn';},2000);\n"
-"  });\n"
-"}\n"
-"</script>\n"
-"</body></html>\n";
-
-static void send_page(int fd)
+/* Write a JSON-escaped string to fd */
+static void json_str(int fd, const char *s)
 {
-    /* HTTP headers */
-    wstr(fd,
+    wstr(fd, "\"");
+    for (; *s; s++) {
+        if (*s == '"' || *s == '\\') {
+            char esc[3] = {'\\', *s, '\0'};
+            wstr(fd, esc);
+        } else {
+            char c[2] = {*s, '\0'};
+            wstr(fd, c);
+        }
+    }
+    wstr(fd, "\"");
+}
+
+/* ── Routes ──────────────────────────────────────────────────────────────── */
+
+/* GET / — serve embedded scanner.html */
+static void route_root(int fd)
+{
+    wfmt(fd,
          "HTTP/1.0 200 OK\r\n"
          "Content-Type: text/html; charset=utf-8\r\n"
+         "Content-Length: %u\r\n"
+         "Connection: close\r\n"
+         "\r\n",
+         scanner_html_len);
+    write(fd, scanner_html, scanner_html_len);
+}
+
+/* GET /api/scan — return current scan results as JSON */
+static void route_api_scan(int fd)
+{
+    wstr(fd,
+         "HTTP/1.0 200 OK\r\n"
+         "Content-Type: application/json\r\n"
          "Connection: close\r\n"
          "\r\n");
 
-    wstr(fd, HTML_HEAD);
-
-    /* Title + toolbar */
-    wfmt(fd,
-         "<h1>&#127760; IP Scanner</h1>\n"
-         "<div class=\"subtitle\">Interface: %s &nbsp;|&nbsp; "
-         "Last scan: %s &nbsp;|&nbsp; %d host(s) found</div>\n"
-         "<div class=\"topbar\">\n"
-         "  <a class=\"btn btn-rescan\" href=\"/rescan\">&#8635; Rescan</a>\n"
-         "</div>\n",
+    wfmt(fd, "{\"iface\":\"%s\",\"last_scan\":\"%s\",\"count\":%d,\"hosts\":[\n",
          g_iface, g_last_scan, g_result.count);
-
-    if (g_result.count == 0) {
-        wstr(fd, "<p style=\"color:#f38ba8\">No hosts found.</p>\n");
-        wstr(fd, HTML_FOOT);
-        return;
-    }
-
-    /* Table */
-    wstr(fd,
-         "<table>\n"
-         "<thead><tr>"
-         "<th class=\"num\">#</th>"
-         "<th>&#9679;</th>"
-         "<th>Hostname</th>"
-         "<th>IP Address</th>"
-         "<th>Manufacturer</th>"
-         "<th>MAC Address</th>"
-         "<th>Comments</th>"
-         "</tr></thead>\n"
-         "<tbody>\n");
 
     for (int i = 0; i < g_result.count; i++) {
         const Host *h = &g_result.hosts[i];
-
-        /* Detect Luckfox auto-password pattern */
-        int autopass = (strstr(h->comment, "Line") && strstr(h->comment, "[GM")) ? 1 : 0;
-
-        /* Escape single quotes in comment for JS */
-        char safe_comment[COMMENT_LEN * 2];
-        int sc = 0;
-        for (int k = 0; h->comment[k] && sc < (int)sizeof(safe_comment) - 2; k++) {
-            if (h->comment[k] == '\'') safe_comment[sc++] = '\\';
-            safe_comment[sc++] = h->comment[k];
-        }
-        safe_comment[sc] = '\0';
-
-        wfmt(fd,
-             "<tr onclick=\"pick(%d,'%s','%s',%d)\">\n"
-             "  <td class=\"num\">%d</td>\n"
-             "  <td><span class=\"dot\">&#9679;</span></td>\n"
-             "  <td class=\"hostname\">%s</td>\n"
-             "  <td class=\"ip\">%s</td>\n"
-             "  <td class=\"vendor\">%s</td>\n"
-             "  <td class=\"mac\">%s</td>\n"
-             "  <td class=\"comment\">%s%s</td>\n"
-             "</tr>\n",
-             i, h->ip, safe_comment, autopass,
-             i + 1,
-             h->hostname,
-             h->ip,
-             h->vendor,
-             h->mac_str,
-             h->comment,
-             autopass ? "<span class=\"luckfox-badge\">luckfox</span>" : "");
+        wstr(fd, "  {");
+        wstr(fd, "\"ip\":");      json_str(fd, h->ip);
+        wstr(fd, ",\"mac\":");    json_str(fd, h->mac_str);
+        wstr(fd, ",\"hostname\":"); json_str(fd, h->hostname);
+        wstr(fd, ",\"vendor\":"); json_str(fd, h->vendor);
+        wstr(fd, ",\"comment\":"); json_str(fd, h->comment);
+        wfmt(fd, ",\"online\":%s}", h->online ? "true" : "false");
+        if (i < g_result.count - 1) wstr(fd, ",");
+        wstr(fd, "\n");
     }
 
-    wstr(fd, "</tbody></table>\n");
-
-    /* SSH panel (shown on row click) */
-    wstr(fd,
-         "<div class=\"ssh-panel\" id=\"ssh-panel\">\n"
-         "  <h3>SSH Command</h3>\n"
-         "  <div class=\"ssh-box\">\n"
-         "    <div class=\"ssh-cmd\" id=\"ssh-cmd-text\"></div>\n"
-         "    <button class=\"copy-btn\" id=\"copy-btn\" onclick=\"copyCmd()\">Copy</button>\n"
-         "  </div>\n"
-         "  <div class=\"info\" id=\"host-info\"></div>\n"
-         "</div>\n");
-
-    wstr(fd, HTML_FOOT);
+    wstr(fd, "]}\n");
 }
 
-static void send_redirect(int fd, const char *location)
+/* GET /rescan — run new scan, return 200 (JS handles reload) */
+static void route_rescan(int fd)
 {
-    char buf[256];
-    snprintf(buf, sizeof(buf),
-             "HTTP/1.0 302 Found\r\nLocation: %s\r\nConnection: close\r\n\r\n",
-             location);
-    wstr(fd, buf);
+    printf("  [web] Rescanning %s ...\n", g_iface);
+    fflush(stdout);
+    do_scan();
+    printf("  [web] Done — %d host(s)\n", g_result.count);
+
+    wstr(fd,
+         "HTTP/1.0 200 OK\r\n"
+         "Content-Type: text/plain\r\n"
+         "Connection: close\r\n"
+         "\r\n"
+         "ok\n");
 }
 
-static void send_404(int fd)
+static void route_404(int fd)
 {
     wstr(fd,
          "HTTP/1.0 404 Not Found\r\n"
@@ -264,23 +151,226 @@ static void send_404(int fd)
          "Not found\n");
 }
 
+/* ── /regen helpers ──────────────────────────────────────────────────────── */
+
+/* HTML-escape a string into a FILE */
+static void fhtml(FILE *f, const char *s)
+{
+    for (; *s; s++) {
+        switch (*s) {
+            case '<': fputs("&lt;",  f); break;
+            case '>': fputs("&gt;",  f); break;
+            case '&': fputs("&amp;", f); break;
+            case '"': fputs("&quot;",f); break;
+            default:  fputc(*s, f);
+        }
+    }
+}
+
+/* Write /etc/nginx/conf.d/ipscan-proxy.conf from current scan results */
+static void write_nginx_proxy_conf(void)
+{
+    FILE *f = fopen("/etc/nginx/conf.d/ipscan-proxy.conf", "w");
+    if (!f) { perror("ipscan-proxy.conf"); return; }
+
+    fprintf(f, "# Auto-generated by ipscanner /regen — do not edit manually\n");
+
+    for (int i = 0; i < g_result.count; i++) {
+        const Host *h = &g_result.hosts[i];
+        if (!strstr(h->comment, "Line") || !strstr(h->comment, "[GM")) continue;
+        int last = 0;
+        sscanf(h->ip, "%*d.%*d.%*d.%d", &last);
+        fprintf(f,
+            "\n# %s  (%s)\n"
+            "server {\n"
+            "    listen %d;\n"
+            "    server_name _;\n"
+            "    location / {\n"
+            "        proxy_pass         http://%s:8000;\n"
+            "        proxy_http_version 1.1;\n"
+            "        proxy_set_header   Upgrade    $http_upgrade;\n"
+            "        proxy_set_header   Connection \"upgrade\";\n"
+            "        proxy_set_header   Host       $host;\n"
+            "        proxy_read_timeout 3600s;\n"
+            "    }\n"
+            "}\n",
+            h->comment, h->ip, 9000 + last, h->ip);
+    }
+    fclose(f);
+    printf("  [regen] nginx proxy conf written\n");
+}
+
+/* Write /var/www/ipscan/index.html from current scan results */
+static void write_landing_page(void)
+{
+    system("mkdir -p /var/www/ipscan");
+    FILE *f = fopen("/var/www/ipscan/index.html", "w");
+    if (!f) { perror("index.html"); return; }
+
+    int ndev = 0;
+    for (int i = 0; i < g_result.count; i++) {
+        const Host *h = &g_result.hosts[i];
+        if (strstr(h->comment, "Line") && strstr(h->comment, "[GM")) ndev++;
+    }
+    int noth = g_result.count - ndev;
+
+    fputs("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n"
+          "<meta charset=\"utf-8\">\n"
+          "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n"
+          "<title>Device Dashboard</title>\n"
+          "<style>\n"
+          "*{box-sizing:border-box;margin:0;padding:0}\n"
+          "body{font-family:'Courier New',monospace;background:#1e1e2e;color:#cdd6f4;padding:24px}\n"
+          "h1{color:#89b4fa;margin-bottom:4px;font-size:22px}\n"
+          ".sub{color:#6c7086;font-size:12px;margin-bottom:20px}\n"
+          ".btn{background:#89b4fa;color:#1e1e2e;border:none;padding:7px 18px;"
+          "border-radius:6px;font-family:inherit;font-size:13px;cursor:pointer;"
+          "font-weight:bold;text-decoration:none;display:inline-block;margin-bottom:20px}\n"
+          ".btn:hover{background:#74c7ec}\n"
+          "h2{color:#cba6f7;font-size:15px;margin:20px 0 10px}\n"
+          "table{width:100%;border-collapse:collapse;background:#181825;border-radius:8px;"
+          "overflow:hidden;margin-bottom:24px;box-shadow:0 2px 8px #00000055}\n"
+          "thead tr{background:#313244}\n"
+          "th{padding:9px 12px;color:#89b4fa;font-size:11px;text-transform:uppercase;text-align:left}\n"
+          "td{padding:8px 12px;border-bottom:1px solid #313244;font-size:13px}\n"
+          "tr:last-child td{border-bottom:none}\n"
+          "tr[data-port]{cursor:pointer;transition:background .15s}\n"
+          "tr[data-port]:hover{background:#313244}\n"
+          ".dot{color:#a6e3a1}\n"
+          ".comment{color:#cba6f7;font-weight:bold}\n"
+          ".mac{color:#6c7086;font-size:11px}\n"
+          ".port{background:#313244;color:#a6e3a1;padding:2px 8px;border-radius:4px;font-size:12px}\n"
+          "a{color:#89b4fa;text-decoration:none}\n"
+          "a:hover{text-decoration:underline}\n"
+          "</style>\n</head>\n<body>\n", f);
+
+    fprintf(f, "<h1>&#127760; Device Dashboard</h1>\n");
+    fprintf(f, "<div class=\"sub\">Last scan: %s &nbsp;|&nbsp; %d host(s) total</div>\n",
+            g_last_scan, g_result.count);
+    fputs("<button class=\"btn\" id=\"rescanBtn\" onclick=\"doRescan()\">"
+          "&#8635; Rescan</button>\n"
+          "<a class=\"btn\" id=\"scannerLink\" href=\"#\" style=\"margin-left:8px\">"
+          "&#128269; Live Scanner</a>\n", f);
+
+    /* ── Luckfox devices table ── */
+    fprintf(f, "<h2>&#9679; Luckfox Devices (%d)</h2>\n", ndev);
+    fputs("<table>\n<thead><tr>"
+          "<th>#</th><th>&#9679;</th><th>IP Address</th><th>Comment</th>"
+          "<th>Manufacturer</th><th>MAC Address</th><th>Port</th>"
+          "</tr></thead>\n<tbody>\n", f);
+
+    int idx = 1;
+    for (int i = 0; i < g_result.count; i++) {
+        const Host *h = &g_result.hosts[i];
+        if (!strstr(h->comment, "Line") || !strstr(h->comment, "[GM")) continue;
+        int last = 0;
+        sscanf(h->ip, "%*d.%*d.%*d.%d", &last);
+        int port = 9000 + last;
+        char vend[29];
+        snprintf(vend, sizeof(vend), "%s", h->vendor);
+        fprintf(f, "<tr data-port=\"%d\"><td>%d</td>"
+                "<td class=\"dot\">&#9679;</td><td><a href=\"#\">", port, idx++);
+        fhtml(f, h->ip);
+        fputs("</a></td><td class=\"comment\">", f);
+        fhtml(f, h->comment);
+        fputs("</td><td>", f);
+        fhtml(f, vend);
+        fputs("</td><td class=\"mac\">", f);
+        fhtml(f, h->mac_str);
+        fprintf(f, "</td><td><span class=\"port\">:%d</span></td></tr>\n", port);
+    }
+    fputs("</tbody>\n</table>\n", f);
+
+    /* ── Other hosts table ── */
+    fprintf(f, "<h2>Other Hosts (%d)</h2>\n", noth);
+    fputs("<table>\n<thead><tr>"
+          "<th>#</th><th>&#9679;</th><th>IP Address</th><th>Comment</th>"
+          "<th>Manufacturer</th><th>MAC Address</th><th>Port</th>"
+          "</tr></thead>\n<tbody>\n", f);
+
+    idx = 1;
+    for (int i = 0; i < g_result.count; i++) {
+        const Host *h = &g_result.hosts[i];
+        if (strstr(h->comment, "Line") && strstr(h->comment, "[GM")) continue;
+        char vend[29];
+        snprintf(vend, sizeof(vend), "%s", h->vendor);
+        fprintf(f, "<tr><td>%d</td><td class=\"dot\">&#9679;</td><td>", idx++);
+        fhtml(f, h->ip);
+        fputs("</td><td>", f);
+        fhtml(f, h->comment);
+        fputs("</td><td>", f);
+        fhtml(f, vend);
+        fputs("</td><td class=\"mac\">", f);
+        fhtml(f, h->mac_str);
+        fputs("</td><td>-</td></tr>\n", f);
+    }
+    fputs("</tbody>\n</table>\n", f);
+
+    /* ── JavaScript ── */
+    fputs("<script>\n"
+          "document.getElementById('scannerLink').href="
+          "'http://'+location.hostname+':8080/';\n"
+          "function doRescan(){\n"
+          "  var btn=document.getElementById('rescanBtn');\n"
+          "  btn.disabled=true;btn.textContent='Scanning...';\n"
+          "  fetch('/regen').then(function(){location.reload();})"
+          ".catch(function(){btn.disabled=false;"
+          "btn.innerHTML='&#8635; Rescan';});\n"
+          "}\n"
+          "document.querySelectorAll('tr[data-port]').forEach(function(row){\n"
+          "  var port=row.getAttribute('data-port');\n"
+          "  var url='http://'+location.hostname+':'+port+'/';\n"
+          "  var link=row.querySelector('a');\n"
+          "  if(link)link.href=url;\n"
+          "  row.onclick=function(e){\n"
+          "    if(e.target.tagName!=='A')window.open(url,'_blank');\n"
+          "  };\n"
+          "});\n"
+          "</script>\n"
+          "</body>\n</html>\n", f);
+
+    fclose(f);
+    printf("  [regen] landing page written\n");
+}
+
+/* GET /regen — rescan + rebuild nginx config + rebuild landing page + reload nginx */
+static void route_regen(int fd)
+{
+    printf("  [web] /regen triggered — scanning %s ...\n", g_iface);
+    fflush(stdout);
+
+    do_scan();
+    printf("  [web] Found %d host(s)\n", g_result.count);
+
+    write_nginx_proxy_conf();
+    write_landing_page();
+    system("nginx -t && nginx -s reload");
+    printf("  [web] nginx reloaded\n");
+
+    wstr(fd,
+         "HTTP/1.0 200 OK\r\n"
+         "Content-Type: text/plain\r\n"
+         "Connection: close\r\n"
+         "\r\n"
+         "ok\n");
+}
+
 /* ── Public entry point ──────────────────────────────────────────────────── */
 
 void web_serve(const char *iface, const char *comments_file,
                const char *ssh_user, int port)
 {
+    (void)ssh_user; /* reserved for future use */
+
     strncpy(g_iface,         iface,         sizeof(g_iface) - 1);
     strncpy(g_comments_file, comments_file, sizeof(g_comments_file) - 1);
-    strncpy(g_ssh_user,      ssh_user,      sizeof(g_ssh_user) - 1);
 
-    /* Initial scan */
     printf("  [web] Scanning %s ...\n", iface);
     fflush(stdout);
     do_scan();
     printf("  [web] Found %d host(s). Serving on http://0.0.0.0:%d/\n\n",
            g_result.count, port);
 
-    /* Create TCP socket */
     int srv = socket(AF_INET, SOCK_STREAM, 0);
     if (srv < 0) { perror("socket"); return; }
 
@@ -300,37 +390,27 @@ void web_serve(const char *iface, const char *comments_file,
         perror("listen"); close(srv); return;
     }
 
-    /* Accept loop */
     while (1) {
-        struct sockaddr_in client_addr;
-        socklen_t client_len = sizeof(client_addr);
-        int fd = accept(srv, (struct sockaddr *)&client_addr, &client_len);
+        int fd = accept(srv, NULL, NULL);
         if (fd < 0) continue;
 
-        /* Read request line */
-        char req[512];
-        ssize_t n = read(fd, req, sizeof(req) - 1);
-        if (n <= 0) { close(fd); continue; }
-        req[n] = '\0';
+        char req[512] = {0};
+        read(fd, req, sizeof(req) - 1);
 
-        /* Parse method and path from first line */
         char method[8] = "", path[256] = "";
         sscanf(req, "%7s %255s", method, path);
 
         if (strcmp(method, "GET") == 0) {
-            if (strcmp(path, "/") == 0 || strcmp(path, "") == 0) {
-                send_page(fd);
-            } else if (strcmp(path, "/rescan") == 0) {
-                printf("  [web] Rescanning %s ...\n", g_iface);
-                fflush(stdout);
-                do_scan();
-                printf("  [web] Done — %d host(s)\n", g_result.count);
-                send_redirect(fd, "/");
-            } else if (strcmp(path, "/favicon.ico") == 0) {
-                send_404(fd);
-            } else {
-                send_404(fd);
-            }
+            if (strcmp(path, "/") == 0 || strcmp(path, "/index.html") == 0)
+                route_root(fd);
+            else if (strcmp(path, "/api/scan") == 0)
+                route_api_scan(fd);
+            else if (strcmp(path, "/rescan") == 0)
+                route_rescan(fd);
+            else if (strcmp(path, "/regen") == 0)
+                route_regen(fd);
+            else
+                route_404(fd);
         }
 
         close(fd);

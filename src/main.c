@@ -139,7 +139,19 @@ int main(int argc, char *argv[])
         }
     }
 
-    /* Check for root */
+    /* Save comment — no root needed */
+    if (save_key[0]) {
+        comments_load(comments_file);
+        if (comments_save(comments_file, save_key, save_val) == 0)
+            printf("Saved: %s = %s\n  File: %s\n",
+                   save_key, save_val, comments_file);
+        else
+            fprintf(stderr, "Error: could not write to %s\n", comments_file);
+        comments_free();
+        return 0;
+    }
+
+    /* Check for root (required for ARP scan and web server) */
     if (geteuid() != 0) {
         fprintf(stderr,
                 "Error: this program requires root privileges.\n"
@@ -157,14 +169,7 @@ int main(int argc, char *argv[])
     oui_init();
     comments_load(comments_file);
 
-    /* Save/update comment (after load so in-memory cache is current) */
-    if (save_key[0]) {
-        if (comments_save(comments_file, save_key, save_val) == 0)
-            printf("Saved: %s = %s\n  File: %s\n",
-                   save_key, save_val, comments_file);
-        else
-            fprintf(stderr, "Error: could not write to %s\n", comments_file);
-    }
+    /* (comments already saved above if -C was given) */
 
     ScanResult result;
     memset(&result, 0, sizeof(result));
