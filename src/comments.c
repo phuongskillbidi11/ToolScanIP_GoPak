@@ -140,6 +140,49 @@ int comments_save(const char *path, const char *key, const char *comment)
     return 0;
 }
 
+int comments_delete(const char *path, const char *key)
+{
+    FILE *f = fopen(path, "r");
+    char lines[512][256];
+    int  nlines = 0;
+
+    if (f) {
+        while (nlines < 512 && fgets(lines[nlines], 256, f))
+            nlines++;
+        fclose(f);
+    }
+
+    f = fopen(path, "w");
+    if (!f) return -1;
+
+    for (int i = 0; i < nlines; i++) {
+        char tmp[256];
+        snprintf(tmp, sizeof(tmp), "%s", lines[i]);
+        tmp[strcspn(tmp, "\r\n")] = '\0';
+        char *eq = strchr(tmp, '=');
+        if (eq) {
+            *eq = '\0';
+            char *end = tmp + strlen(tmp) - 1;
+            while (end > tmp && (*end == ' ' || *end == '\t')) *end-- = '\0';
+            if (strcasecmp(tmp, key) == 0) continue; /* skip this entry */
+        }
+        fputs(lines[i], f);
+    }
+    fclose(f);
+
+    /* Remove from in-memory entries */
+    for (int i = 0; i < entry_count; i++) {
+        if (strcasecmp(entries[i].key, key) == 0) {
+            for (int j = i; j < entry_count - 1; j++)
+                entries[j] = entries[j + 1];
+            entry_count--;
+            break;
+        }
+    }
+
+    return 0;
+}
+
 void comments_free(void)
 {
     free(entries);

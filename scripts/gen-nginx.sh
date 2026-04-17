@@ -2,7 +2,16 @@
 # gen-nginx.sh — Scan network, generate nginx reverse-proxy config for Luckfox devices
 # Usage: sudo ./gen-nginx.sh [interface]
 
-SCANNER="$(dirname "$0")/ipscanner"
+_SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Binary lives next to script (symlink case) or one level up (scripts/ subdir case)
+if [ -x "$_SCRIPT_DIR/ipscanner" ]; then
+    SCANNER="$_SCRIPT_DIR/ipscanner"
+elif [ -x "$_SCRIPT_DIR/../ipscanner" ]; then
+    SCANNER="$_SCRIPT_DIR/../ipscanner"
+else
+    echo "Error: ipscanner binary not found (looked in $_SCRIPT_DIR and $_SCRIPT_DIR/../)"
+    exit 1
+fi
 IFACE="${1:-eth0}"
 JSON_TMP="/tmp/ipscan_result.json"
 NGINX_PROXY="/etc/nginx/conf.d/ipscan-proxy.conf"
@@ -222,6 +231,19 @@ server {
     location /api/scan {
         proxy_pass http://127.0.0.1:$SCANNER_INTERNAL_PORT/api/scan;
         proxy_read_timeout 120s;
+    }
+    location /api/comment {
+        proxy_pass http://127.0.0.1:$SCANNER_INTERNAL_PORT/api/comment;
+        proxy_read_timeout 30s;
+    }
+    location /api/browse {
+        proxy_pass http://127.0.0.1:$SCANNER_INTERNAL_PORT/api/browse;
+        proxy_read_timeout 15s;
+    }
+    location /api/multi-scp {
+        proxy_pass http://127.0.0.1:$SCANNER_INTERNAL_PORT/api/multi-scp;
+        proxy_read_timeout 90s;
+        client_max_body_size 1m;
     }
 }
 EOF

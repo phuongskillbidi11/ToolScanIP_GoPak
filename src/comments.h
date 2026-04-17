@@ -23,6 +23,9 @@ void comments_apply(ScanResult *result);
 /* Save or update a comment. key = MAC string or IP string. */
 int comments_save(const char *path, const char *key, const char *comment);
 
+/* Delete the comment for key. Returns 0 on success, -1 on error. */
+int comments_delete(const char *path, const char *key);
+
 /* Free memory used by comments. */
 void comments_free(void);
 

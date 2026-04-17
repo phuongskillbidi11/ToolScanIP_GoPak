@@ -36,6 +36,11 @@
       "name": "nginx-proxy",
       "description": "Generate and manage nginx reverse-proxy configs that expose Luckfox device UIs remotely.",
       "path": "skills/nginx-proxy/SKILL.md"
+    },
+    {
+      "name": "multi-scp",
+      "description": "Push files from any scanned host to multiple Luckfox devices in parallel via the web UI.",
+      "path": "skills/multi-scp/SKILL.md"
     }
   ]
 }

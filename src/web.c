@@ -9,6 +9,8 @@
 #include <string.h>
 #include <unistd.h>
 #include <time.h>
+#include <pthread.h>
+#include <sys/wait.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -71,13 +73,12 @@ static void json_str(int fd, const char *s)
 {
     wstr(fd, "\"");
     for (; *s; s++) {
-        if (*s == '"' || *s == '\\') {
-            char esc[3] = {'\\', *s, '\0'};
-            wstr(fd, esc);
-        } else {
-            char c[2] = {*s, '\0'};
-            wstr(fd, c);
-        }
+        if      (*s == '"')  wstr(fd, "\\\"");
+        else if (*s == '\\') wstr(fd, "\\\\");
+        else if (*s == '\n') wstr(fd, "\\n");
+        else if (*s == '\r') wstr(fd, "\\r");
+        else if (*s == '\t') wstr(fd, "\\t");
+        else { char c[2] = {*s, '\0'}; wstr(fd, c); }
     }
     wstr(fd, "\"");
 }
@@ -149,6 +150,605 @@ static void route_404(int fd)
          "Connection: close\r\n"
          "\r\n"
          "Not found\n");
+}
+
+/* ── Comment API helpers ─────────────────────────────────────────────────── */
+
+static void url_decode(char *dst, const char *src, size_t dstlen)
+{
+    size_t i = 0;
+    while (*src && i + 1 < dstlen) {
+        if (*src == '%' && src[1] && src[2]) {
+            char hex[3] = {src[1], src[2], '\0'};
+            dst[i++] = (char)strtol(hex, NULL, 16);
+            src += 3;
+        } else if (*src == '+') {
+            dst[i++] = ' ';
+            src++;
+        } else {
+            dst[i++] = *src++;
+        }
+    }
+    dst[i] = '\0';
+}
+
+/* Parse a single field from a URL-encoded form string (key=val&key2=val2...) */
+static void get_field(const char *src, const char *name, char *out, size_t outlen)
+{
+    char needle[128];
+    snprintf(needle, sizeof(needle), "%s=", name);
+    const char *p = strstr(src, needle);
+    if (!p) { out[0] = '\0'; return; }
+    p += strlen(needle);
+    const char *end = strchr(p, '&');
+    size_t len = end ? (size_t)(end - p) : strlen(p);
+    char raw[1024];
+    if (len >= sizeof(raw)) len = sizeof(raw) - 1;
+    memcpy(raw, p, len);
+    raw[len] = '\0';
+    url_decode(out, raw, outlen);
+}
+
+/* POST /api/comment  body: key=...&comment=... */
+static void route_api_comment_save(int fd, const char *req)
+{
+    const char *body = strstr(req, "\r\n\r\n");
+    if (!body) {
+        wstr(fd, "HTTP/1.0 400 Bad Request\r\nContent-Type: text/plain\r\n"
+                 "Connection: close\r\n\r\nbad request\n");
+        return;
+    }
+    body += 4;
+
+    char key[128], comment[256];
+    get_field(body, "key",     key,     sizeof(key));
+    get_field(body, "comment", comment, sizeof(comment));
+
+    if (!key[0]) {
+        wstr(fd, "HTTP/1.0 400 Bad Request\r\nContent-Type: text/plain\r\n"
+                 "Connection: close\r\n\r\nmissing key\n");
+        return;
+    }
+
+    comments_load(g_comments_file);
+    comments_save(g_comments_file, key, comment);
+    comments_apply(&g_result);
+    comments_free();
+
+    printf("  [api] saved comment: %s = %s\n", key, comment);
+
+    wstr(fd, "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n"
+             "Connection: close\r\n\r\n{\"ok\":true}\n");
+}
+
+/* DELETE /api/comment?key=... */
+static void route_api_comment_delete(int fd, const char *path)
+{
+    char key[128];
+    const char *q = strchr(path, '?');
+    if (q) {
+        get_field(q + 1, "key", key, sizeof(key));
+    } else {
+        key[0] = '\0';
+    }
+
+    if (!key[0]) {
+        wstr(fd, "HTTP/1.0 400 Bad Request\r\nContent-Type: text/plain\r\n"
+                 "Connection: close\r\n\r\nmissing key\n");
+        return;
+    }
+
+    comments_load(g_comments_file);
+    comments_delete(g_comments_file, key);
+    comments_apply(&g_result);
+    comments_free();
+
+    printf("  [api] deleted comment: %s\n", key);
+
+    wstr(fd, "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n"
+             "Connection: close\r\n\r\n{\"ok\":true}\n");
+}
+
+/* ── Multi-SCP helpers ───────────────────────────────────────────────────── */
+
+static int valid_ip(const char *ip)
+{
+    int a, b, c, d, n;
+    return sscanf(ip, "%d.%d.%d.%d%n", &a, &b, &c, &d, &n) == 4
+           && ip[n] == '\0'
+           && a >= 0 && a <= 255 && b >= 0 && b <= 255
+           && c >= 0 && c <= 255 && d >= 0 && d <= 255;
+}
+
+static int valid_path(const char *p)
+{
+    if (!p || *p != '/') return 0;
+    for (const char *c = p; *c; c++)
+        if (*c == ';' || *c == '|' || *c == '&' || *c == '`' ||
+            *c == '$' || *c == '\'' || *c == '\n' || *c == '\r')
+            return 0;
+    return 1;
+}
+
+/* Minimal JSON string field extractor: {"key":"value"} */
+static int json_str_val(const char *json, const char *key,
+                        char *out, size_t outlen)
+{
+    char needle[128];
+    snprintf(needle, sizeof(needle), "\"%s\"", key);
+    const char *p = strstr(json, needle);
+    if (!p) { out[0] = '\0'; return 0; }
+    p += strlen(needle);
+    while (*p == ' ' || *p == ':' || *p == '\t' || *p == '\n') p++;
+    if (*p != '"') { out[0] = '\0'; return 0; }
+    p++;
+    size_t i = 0;
+    while (*p && *p != '"' && i + 1 < outlen) {
+        if (*p == '\\') { p++; if (*p) out[i++] = *p++; continue; }
+        out[i++] = *p++;
+    }
+    out[i] = '\0';
+    return (int)i;
+}
+
+/* Minimal JSON string array extractor: {"key":["v1","v2"]} */
+#define JSON_ITEM_LEN 512
+static int json_str_arr(const char *json, const char *key,
+                        char (*out)[JSON_ITEM_LEN], int maxitems)
+{
+    char needle[128];
+    snprintf(needle, sizeof(needle), "\"%s\"", key);
+    const char *p = strstr(json, needle);
+    if (!p) return 0;
+    p += strlen(needle);
+    while (*p && *p != '[') p++;
+    if (!*p) return 0;
+    p++;
+    int count = 0;
+    while (*p && *p != ']' && count < maxitems) {
+        while (*p && *p != '"' && *p != ']') p++;
+        if (*p != '"') break;
+        p++;
+        size_t i = 0;
+        while (*p && *p != '"' && i + 1 < JSON_ITEM_LEN) {
+            if (*p == '\\') { p++; if (*p) out[count][i++] = *p++; continue; }
+            out[count][i++] = *p++;
+        }
+        out[count][i] = '\0';
+        if (*p == '"') p++;
+        count++;
+    }
+    return count;
+}
+
+/* Check if a program exists in PATH */
+static int cmd_exists(const char *name)
+{
+    char cmd[128];
+    snprintf(cmd, sizeof(cmd), "command -v %s >/dev/null 2>&1", name);
+    return system(cmd) == 0;
+}
+
+/* GET /api/browse?ip=<ip>&path=<path>
+   SSH into host, ls -la the path, return JSON entries. */
+static void route_api_browse(int fd, const char *query)
+{
+    char ip[64], path[512];
+    get_field(query, "ip",   ip,   sizeof(ip));
+    get_field(query, "path", path, sizeof(path));
+    if (!path[0]) snprintf(path, sizeof(path), "/root");
+
+    if (!valid_ip(ip) || !valid_path(path)) {
+        wstr(fd, "HTTP/1.0 400 Bad Request\r\nContent-Type: application/json\r\n"
+                 "Connection: close\r\n\r\n{\"error\":\"invalid ip or path\"}\n");
+        return;
+    }
+
+    if (!cmd_exists("sshpass")) {
+        wstr(fd, "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n"
+                 "Connection: close\r\n\r\n"
+                 "{\"error\":\"sshpass not found — run: sudo apt install sshpass\"}\n");
+        return;
+    }
+
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd),
+        "sshpass -p luckfox ssh "
+        "-o StrictHostKeyChecking=no "
+        "-o ConnectTimeout=5 "
+        "root@%s "
+        "\"ls -la \\\"%s\\\"\" 2>&1",
+        ip, path);
+
+    FILE *fp = popen(cmd, "r");
+    if (!fp) {
+        wstr(fd, "HTTP/1.0 500 Internal Server Error\r\nContent-Type: application/json\r\n"
+                 "Connection: close\r\n\r\n{\"error\":\"popen failed\"}\n");
+        return;
+    }
+
+    char ls_out[8192] = {0};
+    size_t n = fread(ls_out, 1, sizeof(ls_out) - 1, fp);
+    ls_out[n] = '\0';
+    int rc = WEXITSTATUS(pclose(fp));
+
+    if (rc != 0) {
+        wstr(fd, "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n"
+                 "Connection: close\r\n\r\n");
+        wstr(fd, "{\"error\":");
+        json_str(fd, ls_out[0] ? ls_out : "SSH connection failed");
+        wstr(fd, "}\n");
+        return;
+    }
+
+    /* Parse ls -la: skip 8 tokens to reach filename */
+    wstr(fd, "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n"
+             "Connection: close\r\n\r\n");
+    wstr(fd, "{\"path\":");
+    json_str(fd, path);
+    wstr(fd, ",\"entries\":[");
+
+    int first = 1;
+    const char *line = ls_out;
+    while (*line) {
+        const char *nl = strchr(line, '\n');
+        size_t llen = nl ? (size_t)(nl - line) : strlen(line);
+
+        char ftype = *line;
+        if (ftype == '-' || ftype == 'd' || ftype == 'l') {
+            /* Skip 8 whitespace-delimited tokens to reach the name */
+            const char *p = line;
+            for (int tok = 0; tok < 8 && p < line + llen; tok++) {
+                while (p < line + llen && (*p == ' ' || *p == '\t')) p++;
+                while (p < line + llen && *p != ' ' && *p != '\t') p++;
+            }
+            while (p < line + llen && (*p == ' ' || *p == '\t')) p++;
+
+            /* Size is token index 4 */
+            const char *szp = line;
+            for (int tok = 0; tok < 4 && szp < line + llen; tok++) {
+                while (szp < line + llen && (*szp == ' ' || *szp == '\t')) szp++;
+                while (szp < line + llen && *szp != ' ' && *szp != '\t') szp++;
+            }
+            while (szp < line + llen && (*szp == ' ' || *szp == '\t')) szp++;
+            long fsz = atol(szp);
+
+            /* Extract name */
+            size_t namelen = (size_t)(line + llen - p);
+            char name[256] = {0};
+            if (namelen >= sizeof(name)) namelen = sizeof(name) - 1;
+            memcpy(name, p, namelen);
+            while (namelen > 0 && (name[namelen-1] == '\r' || name[namelen-1] == '\n'
+                                   || name[namelen-1] == ' '))
+                name[--namelen] = '\0';
+            /* Strip symlink " -> target" suffix */
+            char *arrow = strstr(name, " -> ");
+            if (arrow) *arrow = '\0';
+
+            if (!name[0] || strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
+                line = nl ? nl + 1 : line + llen;
+                continue;
+            }
+
+            char etype = (ftype == 'd') ? 'd' : (ftype == 'l' ? 'l' : 'f');
+            if (!first) wstr(fd, ",");
+            wstr(fd, "{\"name\":");
+            json_str(fd, name);
+            wfmt(fd, ",\"type\":\"%c\",\"size\":%ld}", etype, fsz);
+            first = 0;
+        }
+
+        line = nl ? nl + 1 : line + llen;
+        if (!nl) break;
+    }
+    wstr(fd, "]}\n");
+}
+
+/* ── Multi-SCP transfer ──────────────────────────────────────────────────── */
+
+#define MAX_SCP_TARGETS  16
+#define MAX_SCP_FILES     8
+
+typedef struct {
+    int  job_id;
+    char source_ip[64];
+    char source_paths[MAX_SCP_FILES][JSON_ITEM_LEN];
+    int  num_paths;
+    char target_ip[64];
+    char target_dir[256];
+    int  exit_code;
+    char output[2048];
+} ScpJob;
+
+static void *scp_worker(void *arg)
+{
+    ScpJob *job = (ScpJob *)arg;
+    FILE   *fp;
+    size_t  n;
+    char    cmd[2048];
+
+    /* Staging dir on the Pi — unique per job index */
+    char tmpdir[128];
+    snprintf(tmpdir, sizeof(tmpdir), "/tmp/ipscp_%d", job->job_id);
+
+    /* Fresh staging dir */
+    snprintf(cmd, sizeof(cmd), "rm -rf '%s' && mkdir -p '%s'", tmpdir, tmpdir);
+    system(cmd);
+
+    /* ── Step 1: Download from source device → Pi /tmp ─────────────────── */
+    int pos = snprintf(cmd, sizeof(cmd),
+        "sshpass -p luckfox scp "
+        "-o StrictHostKeyChecking=no "
+        "-o ConnectTimeout=30 -r ");
+    for (int i = 0; i < job->num_paths && pos < (int)sizeof(cmd) - 256; i++)
+        pos += snprintf(cmd + pos, sizeof(cmd) - pos,
+            "'root@%s:%s' ", job->source_ip, job->source_paths[i]);
+    pos += snprintf(cmd + pos, sizeof(cmd) - pos, "'%s/' 2>&1", tmpdir);
+
+    fp = popen(cmd, "r");
+    if (!fp) {
+        snprintf(job->output, sizeof(job->output), "download: popen failed");
+        job->exit_code = -1;
+        goto cleanup;
+    }
+    n = fread(job->output, 1, sizeof(job->output) / 2 - 1, fp);
+    job->output[n] = '\0';
+    job->exit_code = WEXITSTATUS(pclose(fp));
+
+    if (job->exit_code != 0) {
+        /* Prepend label so user knows it was the download step */
+        char tmp2[sizeof(job->output)];
+        snprintf(tmp2, sizeof(tmp2), "[download from %s failed]\n%s",
+                 job->source_ip, job->output);
+        strncpy(job->output, tmp2, sizeof(job->output) - 1);
+        goto cleanup;
+    }
+
+    /* ── Step 2: Ensure target directory exists ────────────────────────── */
+    snprintf(cmd, sizeof(cmd),
+        "sshpass -p luckfox ssh "
+        "-o StrictHostKeyChecking=no "
+        "-o ConnectTimeout=10 "
+        "root@%s 'mkdir -p \"%s\"' 2>&1",
+        job->target_ip, job->target_dir);
+    {
+        FILE *mkfp = popen(cmd, "r");
+        if (mkfp) {
+            char mkbuf[256] = {0};
+            size_t mk = fread(mkbuf, 1, sizeof(mkbuf) - 1, mkfp);
+            mkbuf[mk] = '\0';
+            int mkrc = WEXITSTATUS(pclose(mkfp));
+            if (mkrc != 0) {
+                snprintf(job->output, sizeof(job->output),
+                    "[mkdir -p %s failed]\n%s", job->target_dir, mkbuf);
+                job->exit_code = mkrc;
+                goto cleanup;
+            }
+        }
+    }
+
+    /* ── Step 3: Upload from Pi /tmp → target device ───────────────────── */
+    /* Write a temp shell script so the glob expands correctly */
+    {
+        char script[128];
+        snprintf(script, sizeof(script), "/tmp/ipscp_ul_%s.sh", job->target_ip);
+
+        fp = fopen(script, "w");
+        if (!fp) {
+            snprintf(job->output, sizeof(job->output), "cannot create upload script");
+            job->exit_code = -1;
+            goto cleanup;
+        }
+        fprintf(fp,
+            "#!/bin/sh\n"
+            "sshpass -p luckfox scp "
+            "-o StrictHostKeyChecking=no "
+            "-o ConnectTimeout=30 -r "
+            "%s/* 'root@%s:%s' 2>&1\n",
+            tmpdir, job->target_ip, job->target_dir);
+        fclose(fp);
+
+        snprintf(cmd, sizeof(cmd), "chmod +x '%s'", script);
+        system(cmd);
+
+        fp = popen(script, "r");
+        if (!fp) {
+            snprintf(job->output, sizeof(job->output), "upload: popen failed");
+            job->exit_code = -1;
+            unlink(script);
+            goto cleanup;
+        }
+        n = fread(job->output, 1, sizeof(job->output) - 1, fp);
+        job->output[n] = '\0';
+        job->exit_code = WEXITSTATUS(pclose(fp));
+        unlink(script);
+
+        /* Retry once if host key mismatch */
+        if (job->exit_code != 0 &&
+            strstr(job->output, "Host key verification failed")) {
+            char kc[128];
+            snprintf(kc, sizeof(kc),
+                "ssh-keygen -R '%s' >/dev/null 2>&1", job->target_ip);
+            system(kc);
+
+            fp = fopen(script, "w");
+            if (fp) {
+                fprintf(fp,
+                    "#!/bin/sh\n"
+                    "sshpass -p luckfox scp "
+                    "-o StrictHostKeyChecking=no "
+                    "-o ConnectTimeout=30 -r "
+                    "%s/* 'root@%s:%s' 2>&1\n",
+                    tmpdir, job->target_ip, job->target_dir);
+                fclose(fp);
+                snprintf(cmd, sizeof(cmd), "chmod +x '%s'", script);
+                system(cmd);
+                fp = popen(script, "r");
+                if (fp) {
+                    n = fread(job->output, 1, sizeof(job->output) - 1, fp);
+                    job->output[n] = '\0';
+                    job->exit_code = WEXITSTATUS(pclose(fp));
+                }
+                unlink(script);
+            }
+        }
+    }
+
+cleanup:
+    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", tmpdir);
+    system(cmd);
+    return NULL;
+}
+
+/* POST /api/multi-scp
+   Mode "multi-target": {"mode":"multi-target","source_ip":"...","source_paths":[...],"target_ips":[...],"target_dir":"..."}
+   Mode "multi-dir":    {"mode":"multi-dir","source_ip":"...","source_paths":[...],"target_ip":"...","target_dirs":["...",...]}
+   Returns: {"results":[{"target":"<ip-or-dir>","status":"ok"|"fail","output":"..."},...]}
+*/
+static void route_api_multi_scp(int fd, const char *req)
+{
+    const char *body = strstr(req, "\r\n\r\n");
+    if (!body) {
+        wstr(fd, "HTTP/1.0 400 Bad Request\r\nContent-Type: application/json\r\n"
+                 "Connection: close\r\n\r\n{\"error\":\"no body\"}\n");
+        return;
+    }
+    body += 4;
+
+    char mode[32] = "multi-target";
+    char source_ip[64];
+    char source_paths[MAX_SCP_FILES][JSON_ITEM_LEN];
+    char target_ips[MAX_SCP_TARGETS][JSON_ITEM_LEN];
+    char target_dirs[MAX_SCP_TARGETS][JSON_ITEM_LEN];
+    char target_dir[256]       = "";
+    char target_ip_single[64]  = "";
+
+    json_str_val(body, "mode",      mode,            sizeof(mode));
+    json_str_val(body, "source_ip", source_ip,       sizeof(source_ip));
+    int num_paths    = json_str_arr(body, "source_paths", source_paths, MAX_SCP_FILES);
+    int is_multi_dir = (strcmp(mode, "multi-dir") == 0);
+    int num_targets;
+
+    if (is_multi_dir) {
+        json_str_val(body, "target_ip",  target_ip_single, sizeof(target_ip_single));
+        num_targets = json_str_arr(body, "target_dirs", target_dirs, MAX_SCP_TARGETS);
+    } else {
+        json_str_val(body, "target_dir", target_dir, sizeof(target_dir));
+        num_targets = json_str_arr(body, "target_ips",  target_ips,  MAX_SCP_TARGETS);
+    }
+
+    if (!valid_ip(source_ip) || num_paths == 0 || num_targets == 0) {
+        wstr(fd, "HTTP/1.0 400 Bad Request\r\nContent-Type: application/json\r\n"
+                 "Connection: close\r\n\r\n{\"error\":\"missing or invalid fields\"}\n");
+        return;
+    }
+    if (is_multi_dir && !valid_ip(target_ip_single)) {
+        wstr(fd, "HTTP/1.0 400 Bad Request\r\nContent-Type: application/json\r\n"
+                 "Connection: close\r\n\r\n{\"error\":\"invalid target_ip for multi-dir mode\"}\n");
+        return;
+    }
+
+    if (!cmd_exists("sshpass")) {
+        wstr(fd, "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n"
+                 "Connection: close\r\n\r\n"
+                 "{\"error\":\"sshpass not found — run: sudo apt install sshpass\"}\n");
+        return;
+    }
+
+    /* Normalize target directory/directories: ensure leading '/' and trailing '/' */
+    if (is_multi_dir) {
+        for (int i = 0; i < num_targets; i++) {
+            char *td = target_dirs[i];
+            if (!td[0]) {
+                strncpy(td, "/root/", JSON_ITEM_LEN - 1);
+            } else {
+                if (td[0] != '/') {
+                    char fixed[JSON_ITEM_LEN + 2];
+                    snprintf(fixed, sizeof(fixed), "/%s", td);
+                    strncpy(td, fixed, JSON_ITEM_LEN - 1);
+                    td[JSON_ITEM_LEN - 1] = '\0';
+                }
+                size_t tdlen = strlen(td);
+                if (td[tdlen - 1] != '/' && tdlen < (size_t)(JSON_ITEM_LEN - 1)) {
+                    td[tdlen] = '/'; td[tdlen + 1] = '\0';
+                }
+            }
+            if (!valid_path(td)) {
+                wstr(fd, "HTTP/1.0 400 Bad Request\r\nContent-Type: application/json\r\n"
+                         "Connection: close\r\n\r\n{\"error\":\"invalid target dir path\"}\n");
+                return;
+            }
+        }
+    } else {
+        if (!target_dir[0]) {
+            strncpy(target_dir, "/root/", sizeof(target_dir) - 1);
+        } else {
+            if (target_dir[0] != '/') {
+                char fixed[260];
+                snprintf(fixed, sizeof(fixed), "/%s", target_dir);
+                strncpy(target_dir, fixed, sizeof(target_dir) - 1);
+            }
+            size_t tdlen = strlen(target_dir);
+            if (target_dir[tdlen - 1] != '/' && tdlen < sizeof(target_dir) - 1) {
+                target_dir[tdlen] = '/'; target_dir[tdlen + 1] = '\0';
+            }
+        }
+    }
+
+    for (int i = 0; i < num_paths; i++) {
+        if (!valid_path(source_paths[i])) {
+            wstr(fd, "HTTP/1.0 400 Bad Request\r\nContent-Type: application/json\r\n"
+                     "Connection: close\r\n\r\n{\"error\":\"invalid source path\"}\n");
+            return;
+        }
+    }
+
+    if (is_multi_dir)
+        printf("  [scp] %d file(s) from %s → %d dir(s) on %s\n",
+               num_paths, source_ip, num_targets, target_ip_single);
+    else
+        printf("  [scp] %d file(s) from %s → %d target(s) → %s\n",
+               num_paths, source_ip, num_targets, target_dir);
+
+    /* Build jobs and launch one thread per target/directory */
+    ScpJob    jobs[MAX_SCP_TARGETS];
+    pthread_t threads[MAX_SCP_TARGETS];
+
+    for (int i = 0; i < num_targets; i++) {
+        memset(&jobs[i], 0, sizeof(jobs[i]));
+        jobs[i].job_id    = i;
+        snprintf(jobs[i].source_ip,  sizeof(jobs[i].source_ip),  "%s", source_ip);
+        jobs[i].num_paths = num_paths;
+        for (int j = 0; j < num_paths; j++)
+            snprintf(jobs[i].source_paths[j], JSON_ITEM_LEN, "%s", source_paths[j]);
+
+        if (is_multi_dir) {
+            snprintf(jobs[i].target_ip,  sizeof(jobs[i].target_ip),  "%s", target_ip_single);
+            snprintf(jobs[i].target_dir, sizeof(jobs[i].target_dir), "%s", target_dirs[i]);
+        } else {
+            snprintf(jobs[i].target_ip,  sizeof(jobs[i].target_ip),  "%s", target_ips[i]);
+            snprintf(jobs[i].target_dir, sizeof(jobs[i].target_dir), "%s", target_dir);
+        }
+        pthread_create(&threads[i], NULL, scp_worker, &jobs[i]);
+    }
+
+    for (int i = 0; i < num_targets; i++)
+        pthread_join(threads[i], NULL);
+
+    wstr(fd, "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n"
+             "Connection: close\r\n\r\n");
+    wstr(fd, "{\"results\":[");
+    for (int i = 0; i < num_targets; i++) {
+        if (i) wstr(fd, ",");
+        wstr(fd, "{\"target\":");
+        /* multi-dir: report destination directory; multi-target: report target IP */
+        json_str(fd, is_multi_dir ? jobs[i].target_dir : jobs[i].target_ip);
+        wfmt(fd, ",\"status\":\"%s\",\"output\":",
+             jobs[i].exit_code == 0 ? "ok" : "fail");
+        json_str(fd, jobs[i].output);
+        wstr(fd, "}");
+    }
+    wstr(fd, "]}\n");
 }
 
 /* ── /regen helpers ──────────────────────────────────────────────────────── */
@@ -394,7 +994,7 @@ void web_serve(const char *iface, const char *comments_file,
         int fd = accept(srv, NULL, NULL);
         if (fd < 0) continue;
 
-        char req[512] = {0};
+        char req[8192] = {0};
         read(fd, req, sizeof(req) - 1);
 
         char method[8] = "", path[256] = "";
@@ -409,8 +1009,25 @@ void web_serve(const char *iface, const char *comments_file,
                 route_rescan(fd);
             else if (strcmp(path, "/regen") == 0)
                 route_regen(fd);
+            else if (strncmp(path, "/api/browse", 11) == 0) {
+                const char *q = strchr(path, '?');
+                route_api_browse(fd, q ? q + 1 : "");
+            } else
+                route_404(fd);
+        } else if (strcmp(method, "POST") == 0) {
+            if (strncmp(path, "/api/comment", 12) == 0)
+                route_api_comment_save(fd, req);
+            else if (strcmp(path, "/api/multi-scp") == 0)
+                route_api_multi_scp(fd, req);
             else
                 route_404(fd);
+        } else if (strcmp(method, "DELETE") == 0) {
+            if (strncmp(path, "/api/comment", 12) == 0)
+                route_api_comment_delete(fd, path);
+            else
+                route_404(fd);
+        } else {
+            route_404(fd);
         }
 
         close(fd);
