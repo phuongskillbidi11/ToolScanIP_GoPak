@@ -17,7 +17,8 @@ typedef struct {
     char    mac_str[MAC_STR_LEN];
     char    hostname[HOSTNAME_LEN];
     char    vendor[VENDOR_LEN];
-    char    comment[COMMENT_LEN];   /* user-editable, always empty at scan time */
+    char    comment[COMMENT_LEN];
+    char    comment_src[12];        /* "none","mqtt","manual","override" */
     int     online;
 } Host;
 

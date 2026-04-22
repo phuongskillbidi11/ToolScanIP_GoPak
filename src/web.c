@@ -8,6 +8,7 @@
 #include <stdarg.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <time.h>
 #include <pthread.h>
 #include <sys/wait.h>
@@ -24,13 +25,15 @@
 static ScanResult g_result;
 static char       g_iface[64];
 static char       g_comments_file[256];
+static char       g_mqttmap_file[256];
 static char       g_last_scan[64];
 
 static void do_scan(void)
 {
     memset(&g_result, 0, sizeof(g_result));
     oui_init();
-    comments_load(g_comments_file);
+    comments_load(g_mqttmap_file, 1);   /* lower priority: auto from MQTT */
+    comments_load(g_comments_file, 2);  /* higher priority: manual overrides */
     scan_network(g_iface, &g_result);
     comments_apply(&g_result);
     oui_free();
@@ -118,6 +121,7 @@ static void route_api_scan(int fd)
         wstr(fd, ",\"hostname\":"); json_str(fd, h->hostname);
         wstr(fd, ",\"vendor\":"); json_str(fd, h->vendor);
         wstr(fd, ",\"comment\":"); json_str(fd, h->comment);
+        wstr(fd, ",\"csrc\":");   json_str(fd, h->comment_src);
         wfmt(fd, ",\"online\":%s}", h->online ? "true" : "false");
         if (i < g_result.count - 1) wstr(fd, ",");
         wstr(fd, "\n");
@@ -210,7 +214,8 @@ static void route_api_comment_save(int fd, const char *req)
         return;
     }
 
-    comments_load(g_comments_file);
+    comments_load(g_mqttmap_file, 1);
+    comments_load(g_comments_file, 2);
     comments_save(g_comments_file, key, comment);
     comments_apply(&g_result);
     comments_free();
@@ -221,15 +226,17 @@ static void route_api_comment_save(int fd, const char *req)
              "Connection: close\r\n\r\n{\"ok\":true}\n");
 }
 
-/* DELETE /api/comment?key=... */
+/* DELETE /api/comment?key=...&src=... */
 static void route_api_comment_delete(int fd, const char *path)
 {
-    char key[128];
+    char key[128], src[16];
     const char *q = strchr(path, '?');
     if (q) {
         get_field(q + 1, "key", key, sizeof(key));
+        get_field(q + 1, "src", src, sizeof(src));
     } else {
         key[0] = '\0';
+        src[0] = '\0';
     }
 
     if (!key[0]) {
@@ -238,12 +245,17 @@ static void route_api_comment_delete(int fd, const char *path)
         return;
     }
 
-    comments_load(g_comments_file);
-    comments_delete(g_comments_file, key);
+    /* "mqtt" → delete from mqttmap; everything else → delete from comments */
+    const char *target_file = (strcmp(src, "mqtt") == 0)
+                              ? g_mqttmap_file : g_comments_file;
+
+    comments_load(g_mqttmap_file, 1);
+    comments_load(g_comments_file, 2);
+    comments_delete(target_file, key);
     comments_apply(&g_result);
     comments_free();
 
-    printf("  [api] deleted comment: %s\n", key);
+    printf("  [api] deleted comment: %s (src=%s, file=%s)\n", key, src, target_file);
 
     wstr(fd, "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n"
              "Connection: close\r\n\r\n{\"ok\":true}\n");
@@ -396,45 +408,65 @@ static void route_api_browse(int fd, const char *query)
 
         char ftype = *line;
         if (ftype == '-' || ftype == 'd' || ftype == 'l') {
-            /* Skip 8 whitespace-delimited tokens to reach the name */
+            /* Tokenize ls -la: perms nlinks owner group size mon day time name... */
+            /* indices:         0     1      2     3     4    5   6   7    8+    */
+            const char *tstart[9]; int tlen9[9]; int ntok = 0;
             const char *p = line;
-            for (int tok = 0; tok < 8 && p < line + llen; tok++) {
+            while (ntok < 9 && p < line + llen) {
                 while (p < line + llen && (*p == ' ' || *p == '\t')) p++;
-                while (p < line + llen && *p != ' ' && *p != '\t') p++;
+                if (p >= line + llen) break;
+                tstart[ntok] = p;
+                if (ntok == 8) {
+                    tlen9[ntok] = (int)(line + llen - p);
+                } else {
+                    while (p < line + llen && *p != ' ' && *p != '\t') p++;
+                    tlen9[ntok] = (int)(p - tstart[ntok]);
+                }
+                ntok++;
             }
-            while (p < line + llen && (*p == ' ' || *p == '\t')) p++;
+            if (ntok < 9) { line = nl ? nl + 1 : line + llen; if (!nl) break; continue; }
 
-            /* Size is token index 4 */
-            const char *szp = line;
-            for (int tok = 0; tok < 4 && szp < line + llen; tok++) {
-                while (szp < line + llen && (*szp == ' ' || *szp == '\t')) szp++;
-                while (szp < line + llen && *szp != ' ' && *szp != '\t') szp++;
+            char perms[12] = {0};
+            memcpy(perms, tstart[0], tlen9[0] < 11 ? tlen9[0] : 10);
+
+            char owner[32] = {0};
+            memcpy(owner, tstart[2], tlen9[2] < 31 ? tlen9[2] : 30);
+
+            long fsz = atol(tstart[4]);
+
+            char date[20] = {0};
+            {
+                char mo[4]={0}, dy[3]={0}, tm[6]={0};
+                memcpy(mo, tstart[5], tlen9[5] < 3 ? tlen9[5] : 3);
+                memcpy(dy, tstart[6], tlen9[6] < 2 ? tlen9[6] : 2);
+                memcpy(tm, tstart[7], tlen9[7] < 5 ? tlen9[7] : 5);
+                snprintf(date, sizeof(date), "%s %s %s", mo, dy, tm);
             }
-            while (szp < line + llen && (*szp == ' ' || *szp == '\t')) szp++;
-            long fsz = atol(szp);
 
-            /* Extract name */
-            size_t namelen = (size_t)(line + llen - p);
+            size_t namelen = (size_t)tlen9[8];
             char name[256] = {0};
             if (namelen >= sizeof(name)) namelen = sizeof(name) - 1;
-            memcpy(name, p, namelen);
+            memcpy(name, tstart[8], namelen);
             while (namelen > 0 && (name[namelen-1] == '\r' || name[namelen-1] == '\n'
                                    || name[namelen-1] == ' '))
                 name[--namelen] = '\0';
-            /* Strip symlink " -> target" suffix */
             char *arrow = strstr(name, " -> ");
             if (arrow) *arrow = '\0';
 
             if (!name[0] || strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
                 line = nl ? nl + 1 : line + llen;
+                if (!nl) break;
                 continue;
             }
 
             char etype = (ftype == 'd') ? 'd' : (ftype == 'l' ? 'l' : 'f');
             if (!first) wstr(fd, ",");
-            wstr(fd, "{\"name\":");
-            json_str(fd, name);
-            wfmt(fd, ",\"type\":\"%c\",\"size\":%ld}", etype, fsz);
+            wstr(fd, "{\"name\":"); json_str(fd, name);
+            wfmt(fd, ",\"type\":\"%c\",\"size\":%ld", etype, fsz);
+            wstr(fd, ",\"perms\":"); json_str(fd, perms);
+            wstr(fd, ",\"owner\":"); json_str(fd, owner);
+            wstr(fd, ",\"date\":"); json_str(fd, date);
+            wstr(fd, "}");
             first = 0;
         }
 
@@ -751,6 +783,88 @@ static void route_api_multi_scp(int fd, const char *req)
     wstr(fd, "]}\n");
 }
 
+/* ── Remote filesystem ops ───────────────────────────────────────────────── */
+
+static void ssh_exec(int fd, const char *ip, const char *shellcmd)
+{
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd),
+        "sshpass -p luckfox ssh "
+        "-o StrictHostKeyChecking=no -o ConnectTimeout=5 "
+        "root@%s '%s' 2>&1", ip, shellcmd);
+    FILE *fp = popen(cmd, "r");
+    char out[512] = {0};
+    int rc = 0;
+    if (fp) { fread(out, 1, sizeof(out) - 1, fp); rc = WEXITSTATUS(pclose(fp)); }
+    if (rc != 0) {
+        wstr(fd, "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n"
+                 "Connection: close\r\n\r\n{\"error\":");
+        json_str(fd, out[0] ? out : "command failed");
+        wstr(fd, "}\n");
+    } else {
+        wstr(fd, "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n"
+                 "Connection: close\r\n\r\n{\"ok\":true}\n");
+    }
+}
+
+/* POST /api/mkdir  body: ip=...&path=... */
+static void route_api_mkdir(int fd, const char *req)
+{
+    const char *body = strstr(req, "\r\n\r\n");
+    if (!body) { wstr(fd, "HTTP/1.0 400 Bad Request\r\nContent-Type: application/json\r\n"
+                          "Connection: close\r\n\r\n{\"error\":\"no body\"}\n"); return; }
+    body += 4;
+    char ip[64], path[512];
+    get_field(body, "ip",   ip,   sizeof(ip));
+    get_field(body, "path", path, sizeof(path));
+    if (!valid_ip(ip) || !valid_path(path)) {
+        wstr(fd, "HTTP/1.0 400 Bad Request\r\nContent-Type: application/json\r\n"
+                 "Connection: close\r\n\r\n{\"error\":\"invalid ip or path\"}\n"); return;
+    }
+    char sc[640];
+    snprintf(sc, sizeof(sc), "mkdir -p \"%s\"", path);
+    ssh_exec(fd, ip, sc);
+}
+
+/* POST /api/rm  body: ip=...&path=... */
+static void route_api_rm(int fd, const char *req)
+{
+    const char *body = strstr(req, "\r\n\r\n");
+    if (!body) { wstr(fd, "HTTP/1.0 400 Bad Request\r\nContent-Type: application/json\r\n"
+                          "Connection: close\r\n\r\n{\"error\":\"no body\"}\n"); return; }
+    body += 4;
+    char ip[64], path[512];
+    get_field(body, "ip",   ip,   sizeof(ip));
+    get_field(body, "path", path, sizeof(path));
+    if (!valid_ip(ip) || !valid_path(path) || strlen(path) < 4) {
+        wstr(fd, "HTTP/1.0 400 Bad Request\r\nContent-Type: application/json\r\n"
+                 "Connection: close\r\n\r\n{\"error\":\"invalid ip or path\"}\n"); return;
+    }
+    char sc[640];
+    snprintf(sc, sizeof(sc), "rm -rf \"%s\"", path);
+    ssh_exec(fd, ip, sc);
+}
+
+/* POST /api/rename  body: ip=...&from=...&to=... */
+static void route_api_rename(int fd, const char *req)
+{
+    const char *body = strstr(req, "\r\n\r\n");
+    if (!body) { wstr(fd, "HTTP/1.0 400 Bad Request\r\nContent-Type: application/json\r\n"
+                          "Connection: close\r\n\r\n{\"error\":\"no body\"}\n"); return; }
+    body += 4;
+    char ip[64], from[512], to[512];
+    get_field(body, "ip",   ip,   sizeof(ip));
+    get_field(body, "from", from, sizeof(from));
+    get_field(body, "to",   to,   sizeof(to));
+    if (!valid_ip(ip) || !valid_path(from) || !valid_path(to)) {
+        wstr(fd, "HTTP/1.0 400 Bad Request\r\nContent-Type: application/json\r\n"
+                 "Connection: close\r\n\r\n{\"error\":\"invalid ip or path\"}\n"); return;
+    }
+    char sc[1100];
+    snprintf(sc, sizeof(sc), "mv \"%s\" \"%s\"", from, to);
+    ssh_exec(fd, ip, sc);
+}
+
 /* ── /regen helpers ──────────────────────────────────────────────────────── */
 
 /* HTML-escape a string into a FILE */
@@ -964,6 +1078,7 @@ void web_serve(const char *iface, const char *comments_file,
 
     strncpy(g_iface,         iface,         sizeof(g_iface) - 1);
     strncpy(g_comments_file, comments_file, sizeof(g_comments_file) - 1);
+    mqttmap_path_from_comments(comments_file, g_mqttmap_file, sizeof(g_mqttmap_file));
 
     printf("  [web] Scanning %s ...\n", iface);
     fflush(stdout);
@@ -976,6 +1091,7 @@ void web_serve(const char *iface, const char *comments_file,
 
     int yes = 1;
     setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+    fcntl(srv, F_SETFD, FD_CLOEXEC); /* don't leak socket into popen() children */
 
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
@@ -1019,6 +1135,12 @@ void web_serve(const char *iface, const char *comments_file,
                 route_api_comment_save(fd, req);
             else if (strcmp(path, "/api/multi-scp") == 0)
                 route_api_multi_scp(fd, req);
+            else if (strcmp(path, "/api/mkdir") == 0)
+                route_api_mkdir(fd, req);
+            else if (strcmp(path, "/api/rm") == 0)
+                route_api_rm(fd, req);
+            else if (strcmp(path, "/api/rename") == 0)
+                route_api_rename(fd, req);
             else
                 route_404(fd);
         } else if (strcmp(method, "DELETE") == 0) {

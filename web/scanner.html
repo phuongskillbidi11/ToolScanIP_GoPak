@@ -341,6 +341,35 @@ tbody tr.selected { background: #eff6ff; }
   margin-left: 4px;
 }
 
+/* ── Comment source badges ───────────────────────────────────────────────── */
+.src-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 700;
+  margin-left: 5px;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.src-badge-mqtt {
+  background: #ecfdf5;
+  color: #059669;
+  border: 1px solid #6ee7b7;
+}
+.src-badge-manual {
+  background: #eff6ff;
+  color: #2563eb;
+  border: 1px solid #93c5fd;
+}
+.src-badge-override {
+  background: #fff7ed;
+  color: #ea580c;
+  border: 1px solid #fdba74;
+}
+
 /* ── Action buttons in table rows ────────────────────────────────────────── */
 .td-actions {
   white-space: nowrap;
@@ -754,9 +783,46 @@ tbody tr.selected { background: #eff6ff; }
 .scp-ico-file { color: #6b7280; font-size: 14px; flex-shrink: 0; }
 .scp-ico-link { color: #7c3aed; font-size: 14px; flex-shrink: 0; }
 
-.scp-fname     { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scp-fname     { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 80px; }
 .scp-fname-dir { font-weight: 600; color: #374151; }
-.scp-fsize     { font-size: 11px; color: #9ca3af; white-space: nowrap; }
+.scp-fsize     { font-size: 11px; color: #9ca3af; white-space: nowrap; width: 66px; text-align: right; flex-shrink: 0; }
+.scp-fdate     { font-size: 11px; color: #6b7280; white-space: nowrap; width: 102px; flex-shrink: 0; }
+.scp-fperms    { font-size: 10px; color: #9ca3af; white-space: nowrap; width: 88px; flex-shrink: 0; font-family: 'Courier New', monospace; }
+.scp-fowner    { font-size: 11px; color: #9ca3af; white-space: nowrap; width: 54px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; }
+.scp-col-hdr {
+  display: flex; align-items: center; gap: 10px;
+  padding: 4px 14px; border-bottom: 1px solid #e5e7eb;
+  background: #f3f4f6; position: sticky; top: 0; z-index: 1;
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .04em; color: #9ca3af; user-select: none;
+}
+
+.scp-path-bar {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 10px; border-bottom: 1px solid #e5e7eb; background: #fff;
+}
+.scp-path-input {
+  flex: 1; padding: 4px 8px !important; font-size: 12px !important;
+  font-family: 'Courier New', monospace !important;
+}
+
+.scp-actions-bar {
+  display: flex; align-items: center; gap: 4px;
+  padding: 6px 10px; border-top: 1px solid #e5e7eb; background: #f9fafb;
+  flex-wrap: wrap;
+}
+.scp-act-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 10px; border-radius: 4px; font-size: 12px; font-weight: 500;
+  cursor: pointer; border: 1px solid #d1d5db; background: #fff; color: #374151;
+  font-family: inherit; transition: background .1s, color .1s;
+  white-space: nowrap;
+}
+.scp-act-btn:hover:not(:disabled) { background: #f3f4f6; }
+.scp-act-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.scp-act-btn-primary { background: #2563eb; color: #fff; border-color: #2563eb; }
+.scp-act-btn-primary:hover:not(:disabled) { background: #1d4ed8 !important; }
+.scp-act-btn-danger:hover:not(:disabled) { background: #fef2f2 !important; color: #dc2626; border-color: #fca5a5; }
 
 .scp-empty {
   padding: 28px 16px;
@@ -1058,11 +1124,17 @@ tbody tr.selected { background: #eff6ff; }
     <div id="scp-body" style="display:none">
       <div class="scp-grid">
 
-        <!-- Source panel -->
+        <!-- ── Source panel ── -->
         <div class="scp-panel">
           <div class="scp-panel-title">
             <span><i class="fa-solid fa-hard-drive"></i>&nbsp; Source Device</span>
-            <span id="scp-sel-count" style="font-weight:400;color:#2563eb;text-transform:none;letter-spacing:0"></span>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span id="scp-sel-count" style="font-weight:400;color:#2563eb;text-transform:none;letter-spacing:0"></span>
+              <button class="btn-icon" id="scp-refresh-btn" title="Refresh"
+                onclick="scpRefresh()" style="display:none;width:24px;height:24px;padding:0">
+                <i class="fa-solid fa-rotate" id="scp-refresh-icon"></i>
+              </button>
+            </div>
           </div>
           <div class="scp-source-bar">
             <select class="scp-select" id="scp-source-sel" onchange="onSourceChange()">
@@ -1074,6 +1146,15 @@ tbody tr.selected { background: #eff6ff; }
               placeholder="Enter IP, e.g. 192.168.3.60"
               onkeydown="if(event.key==='Enter')scpBrowse(scpPath)">
           </div>
+          <div class="scp-path-bar" id="scp-src-path-bar" style="display:none">
+            <span style="font-size:11px;color:#6b7280;white-space:nowrap">Path:</span>
+            <input class="scp-input scp-path-input" id="scp-src-path-input" type="text" value="/root"
+              onkeydown="if(event.key==='Enter')scpSrcGo()">
+            <button class="btn-icon" title="Go" onclick="scpSrcGo()"
+              style="width:26px;height:26px;padding:0;flex-shrink:0">
+              <i class="fa-solid fa-arrow-right"></i>
+            </button>
+          </div>
           <div class="scp-breadcrumb" id="scp-breadcrumb">
             <span style="color:#d1d5db"><i class="fa-solid fa-folder-open"></i>&nbsp;Select a source above</span>
           </div>
@@ -1082,13 +1163,33 @@ tbody tr.selected { background: #eff6ff; }
               <i class="fa-solid fa-arrow-up-from-bracket" style="margin-right:6px"></i>Select a source device to browse files
             </div>
           </div>
+          <div class="scp-actions-bar" id="scp-src-actions" style="display:none">
+            <button class="scp-act-btn" onclick="scpRefresh()" title="Refresh">
+              <i class="fa-solid fa-rotate"></i> Refresh
+            </button>
+            <button class="scp-act-btn" onclick="scpSrcMkdir()" title="New Folder">
+              <i class="fa-solid fa-folder-plus"></i> New Folder
+            </button>
+            <button class="scp-act-btn scp-act-btn-danger" id="scp-src-rm-btn"
+              onclick="scpSrcRm()" title="Remove selected" disabled>
+              <i class="fa-solid fa-trash"></i> Remove
+            </button>
+            <button class="scp-act-btn scp-act-btn-danger" id="scp-src-rename-btn"
+              onclick="scpSrcRename()" title="Rename selected" disabled>
+              <i class="fa-solid fa-pen"></i> Rename
+            </button>
+            <button class="scp-act-btn scp-act-btn-primary" id="scp-upload-btn"
+              onclick="deployToHere()" title="Upload selected files to target" disabled>
+              <i class="fa-solid fa-upload"></i> Upload
+            </button>
+          </div>
         </div>
 
-        <!-- Targets panel -->
+        <!-- ── Target Devices panel ── -->
         <div class="scp-panel">
           <div class="scp-panel-title">
             <span><i class="fa-solid fa-microchip"></i>&nbsp; Target Devices</span>
-            <div id="scp-mode1-allnone" style="display:flex;gap:6px">
+            <div style="display:flex;gap:6px">
               <button class="btn-icon btn-icon-edit"
                 style="width:auto;padding:0 10px;height:22px;font-size:11px"
                 onclick="scpSelectAll()">All</button>
@@ -1097,46 +1198,25 @@ tbody tr.selected { background: #eff6ff; }
                 onclick="scpDeselectAll()">None</button>
             </div>
           </div>
-          <!-- Mode toggle -->
-          <div class="mode-toggle">
-            <button id="scp-mode-btn-1" class="mode-btn active" onclick="scpSetMode('multi-target')">
-              <i class="fa-solid fa-layer-group"></i> Multiple Devices
-            </button>
-            <button id="scp-mode-btn-2" class="mode-btn" onclick="scpSetMode('multi-dir')">
-              <i class="fa-solid fa-folder-tree"></i> Multiple Directories
-            </button>
+          <div class="scp-path-bar">
+            <span style="font-size:11px;color:#6b7280;white-space:nowrap">Path:</span>
+            <input class="scp-input scp-path-input" id="scp-tgt-dest-input" type="text" value="/root/"
+              oninput="document.getElementById('scp-dest').value=this.value;scpRefreshTargetBrowsers()"
+              onkeydown="if(event.key==='Enter'){document.getElementById('scp-dest').value=this.value;scpRefreshTargetBrowsers();}">
           </div>
-          <!-- Mode 1: checkbox list -->
-          <div id="scp-mode1-content">
-            <div class="target-list" id="scp-target-list">
-              <div class="scp-empty">No Luckfox devices. Run Rescan first.</div>
-            </div>
-          </div>
-          <!-- Mode 2: radio device select + dir browser -->
-          <div id="scp-mode2-content" style="display:none">
-            <div class="target-list" id="scp-mode2-device-list">
-              <div class="scp-empty">No Luckfox devices found.</div>
-            </div>
-            <div id="scp-mode2-browser" style="display:none;border-top:1px solid #e5e7eb">
-              <div class="scp-panel-title" style="background:#f0fdf4">
-                <span><i class="fa-solid fa-folder-tree" style="color:#059669"></i>&nbsp; Destination Directories</span>
-                <span id="scp-mode2-dir-count" style="font-weight:400;color:#059669;text-transform:none;letter-spacing:0"></span>
-              </div>
-              <div class="scp-breadcrumb" id="scp-mode2-breadcrumb"></div>
-              <div class="scp-filelist" id="scp-mode2-filelist">
-                <div class="scp-empty">Select a target device above</div>
-              </div>
-            </div>
+          <div class="target-list" id="scp-target-list">
+            <div class="scp-empty">No Luckfox devices. Run Rescan first.</div>
           </div>
         </div>
       </div>
 
-      <!-- Destination + Deploy -->
+      <!-- ── Destination + Deploy ── -->
       <div class="scp-bottom">
-        <span class="scp-dest-label" id="scp-dest-label">
+        <span class="scp-dest-label">
           <i class="fa-solid fa-folder-arrow-down"></i>&nbsp; Destination:
         </span>
-        <input class="scp-dest-input" id="scp-dest" type="text" value="/root/">
+        <input class="scp-dest-input" id="scp-dest" type="text" value="/root/"
+          oninput="var t=document.getElementById('scp-tgt-dest-input');if(t)t.value=this.value">
         <button class="btn-deploy" id="scp-deploy-btn" onclick="deployMultiSCP()" disabled>
           <i class="fa-solid fa-upload" id="scp-deploy-icon"></i> Deploy
         </button>
@@ -1212,6 +1292,38 @@ function renderTable(hosts) {
     var lk = isLuckfox(h.comment);
     var tr = document.createElement('tr');
     var editKey = h.mac && h.mac !== '—' && h.mac !== '' ? h.mac : h.ip;
+    var csrc = h.csrc || 'none';
+
+    /* source badge */
+    var srcBadge = '';
+    if (csrc === 'mqtt') {
+      srcBadge = '<span class="src-badge src-badge-mqtt"><i class="fa-solid fa-tower-broadcast"></i>MQTT</span>';
+    } else if (csrc === 'manual') {
+      srcBadge = '<span class="src-badge src-badge-manual"><i class="fa-solid fa-pen-to-square"></i>Manual</span>';
+    } else if (csrc === 'override') {
+      srcBadge = '<span class="src-badge src-badge-override"><i class="fa-solid fa-pen-to-square"></i>Manual&#8593;</span>';
+    }
+
+    /* action buttons depend on source */
+    var actionBtns = '<button class="btn-icon btn-icon-edit" title="Edit comment (saves to manual)" onclick="editRow(event,\'' + escAttr(editKey) + '\',\'' + escAttr(h.comment) + '\')">' +
+      '<i class="fa-solid fa-pen"></i></button>';
+    if (h.comment) {
+      if (csrc === 'mqtt') {
+        /* MQTT-only: no delete (read-only label); offer Pin to manual */
+        actionBtns += '<button class="btn-icon" title="Pin as manual comment" style="color:#2563eb" onclick="pinMqtt(event,\'' + escAttr(editKey) + '\',\'' + escAttr(h.comment) + '\')">' +
+          '<i class="fa-solid fa-thumbtack"></i></button>';
+      } else if (csrc === 'override') {
+        /* Manual overrides MQTT: can unpin (delete manual entry, revert to MQTT) or fully delete */
+        actionBtns += '<button class="btn-icon" title="Unpin manual override (revert to MQTT label)" style="color:#ea580c" onclick="unpinRow(event,\'' + escAttr(editKey) + '\')">' +
+          '<i class="fa-solid fa-thumbtack" style="text-decoration:line-through"></i></button>';
+        actionBtns += '<button class="btn-icon btn-icon-del" title="Delete manual comment" onclick="delRow(event,\'' + escAttr(editKey) + '\',\'manual\')">' +
+          '<i class="fa-solid fa-trash"></i></button>';
+      } else {
+        /* manual or none: normal delete */
+        actionBtns += '<button class="btn-icon btn-icon-del" title="Delete comment" onclick="delRow(event,\'' + escAttr(editKey) + '\',\'' + csrc + '\')">' +
+          '<i class="fa-solid fa-trash"></i></button>';
+      }
+    }
 
     tr.innerHTML =
       '<td class="td-num">' + (i+1) + '</td>' +
@@ -1224,18 +1336,10 @@ function renderTable(hosts) {
         (h.comment
           ? '<span class="tag-comment"><i class="fa-solid fa-tag"></i>' + escHtml(h.comment) + '</span>'
           : '<span style="color:#d1d5db">—</span>') +
+        srcBadge +
         (lk ? '<span class="tag-luckfox"><i class="fa-solid fa-bolt"></i>luckfox</span>' : '') +
       '</td>' +
-      '<td class="td-actions">' +
-        '<button class="btn-icon btn-icon-edit" title="Edit comment" onclick="editRow(event,\'' + escAttr(editKey) + '\',\'' + escAttr(h.comment) + '\')">' +
-          '<i class="fa-solid fa-pen"></i>' +
-        '</button>' +
-        (h.comment
-          ? '<button class="btn-icon btn-icon-del" title="Delete comment" onclick="delRow(event,\'' + escAttr(editKey) + '\')">' +
-              '<i class="fa-solid fa-trash"></i>' +
-            '</button>'
-          : '') +
-      '</td>';
+      '<td class="td-actions">' + actionBtns + '</td>';
 
     tr.onclick = function() { selectRow(i, h, tr); };
     tbody.appendChild(tr);
@@ -1356,10 +1460,26 @@ function editRow(e, key, comment) {
   openEditModal(key, comment);
 }
 
-function delRow(e, key) {
+function delRow(e, key, src) {
   e.stopPropagation();
   if (!confirm('Delete comment for: ' + key + '?')) return;
-  deleteComment(key);
+  deleteComment(key, src || 'manual');
+}
+
+function pinMqtt(e, key, comment) {
+  e.stopPropagation();
+  /* Save current MQTT label as a manual entry → becomes "override" */
+  var body = 'key=' + encodeURIComponent(key) + '&comment=' + encodeURIComponent(comment);
+  fetch('/api/comment', { method: 'POST', headers: {'Content-Type':'application/x-www-form-urlencoded'}, body: body })
+    .then(function(r) { if (!r.ok) throw new Error('Server error ' + r.status); return r.json(); })
+    .then(function() { load(); })
+    .catch(function(err) { alert('Pin error: ' + err.message); });
+}
+
+function unpinRow(e, key) {
+  e.stopPropagation();
+  if (!confirm('Remove manual override for ' + key + '? Will revert to MQTT label.')) return;
+  deleteComment(key, 'manual');
 }
 
 function doSaveComment() {
@@ -1396,8 +1516,8 @@ function doSaveComment() {
   });
 }
 
-function deleteComment(key) {
-  fetch('/api/comment?key=' + encodeURIComponent(key), { method: 'DELETE' })
+function deleteComment(key, src) {
+  fetch('/api/comment?key=' + encodeURIComponent(key) + '&src=' + encodeURIComponent(src || 'manual'), { method: 'DELETE' })
     .then(function(r) {
       if (!r.ok) throw new Error('Server error ' + r.status);
       return r.json();
@@ -1477,6 +1597,11 @@ var scpMode2IP   = '';
 var scpMode2Path = '/root';
 var scpMode2Dirs = new Set();   /* selected destination directories (mode 2) */
 
+/* ── Target panel state ── */
+var scpTgtIP   = '';
+var scpTgtPath = '/root';
+var scpTgtSel  = new Set();
+
 function toggleSCPPanel() {
   scpOpen = !scpOpen;
   document.getElementById('scp-body').style.display = scpOpen ? '' : 'none';
@@ -1484,7 +1609,6 @@ function toggleSCPPanel() {
   if (scpOpen) {
     scpPopulateSources();
     scpPopulateTargets();
-    scpMode2PopulateTargets();
   }
 }
 
@@ -1546,9 +1670,19 @@ function scpPopulateTargets() {
       '</div>';
 
     var cb = row.querySelector('input.scp-tcb');
-    cb.addEventListener('change', scpUpdateDeploy);
+    cb.addEventListener('change', function() {
+      scpUpdateDeploy();
+      var browser = document.getElementById(browserId);
+      if (cb.checked) {
+        if (browser) browser.classList.add('open');
+        var dest = document.getElementById('scp-tgt-dest-input').value.trim() || '/root/';
+        renderTargetBrowserFiles(h.ip, dest, browser);
+      } else {
+        if (browser) { browser.classList.remove('open'); browser.querySelector('.target-file-list').innerHTML = ''; }
+      }
+    });
 
-    /* Clicking the row body (not the IP link or checkbox) toggles checkbox */
+    /* Clicking the row body (not the browser area or checkbox) toggles checkbox */
     row.addEventListener('click', function(e) {
       if (e.target.classList.contains('target-ip-link') ||
           e.target.closest('.target-ip-link') ||
@@ -1556,15 +1690,33 @@ function scpPopulateTargets() {
           e.target.closest('.target-browser') ||
           e.target === cb) return;
       cb.checked = !cb.checked;
-      scpUpdateDeploy();
+      cb.dispatchEvent(new Event('change'));
     });
 
     list.appendChild(row);
   });
 }
 
-function scpSelectAll()   { document.querySelectorAll('.scp-tcb').forEach(function(c){c.checked=true;});  scpUpdateDeploy(); }
-function scpDeselectAll() { document.querySelectorAll('.scp-tcb').forEach(function(c){c.checked=false;}); scpUpdateDeploy(); }
+function scpSelectAll() {
+  document.querySelectorAll('.scp-tcb').forEach(function(c){
+    c.checked = true; c.dispatchEvent(new Event('change'));
+  });
+}
+function scpDeselectAll() {
+  document.querySelectorAll('.scp-tcb').forEach(function(c){
+    c.checked = false; c.dispatchEvent(new Event('change'));
+  });
+}
+
+function scpRefreshTargetBrowsers() {
+  var dest = document.getElementById('scp-tgt-dest-input').value.trim() || '/root/';
+  document.querySelectorAll('.scp-tcb:checked').forEach(function(cb) {
+    var ip = cb.value;
+    var browserId = 'tbp-' + ip.replace(/\./g, '-');
+    var panel = document.getElementById(browserId);
+    if (panel) renderTargetBrowserFiles(ip, dest, panel);
+  });
+}
 
 function onSourceChange() {
   var val = document.getElementById('scp-source-sel').value;
@@ -1593,6 +1745,10 @@ function scpBrowse(path) {
   scpPath     = path;
 
   scpRenderBreadcrumb(path);
+  document.getElementById('scp-refresh-btn').style.display = '';
+  document.getElementById('scp-src-path-bar').style.display = '';
+  document.getElementById('scp-src-actions').style.display = '';
+  document.getElementById('scp-src-path-input').value = path;
 
   document.getElementById('scp-filelist').innerHTML =
     '<div class="scp-loading"><i class="fa-solid fa-spinner fa-spin-custom"></i>&nbsp; Loading...</div>';
@@ -1647,20 +1803,39 @@ function scpRenderFiles(entries, currentPath) {
   var list = document.getElementById('scp-filelist');
   list.innerHTML = '';
 
+  /* Column header */
+  var hdr = document.createElement('div');
+  hdr.className = 'scp-col-hdr';
+  hdr.innerHTML =
+    '<span style="width:15px;flex-shrink:0"></span>' +
+    '<span style="width:14px;flex-shrink:0"></span>' +
+    '<span class="scp-fname">Name</span>' +
+    '<span class="scp-fsize">Size</span>' +
+    '<span class="scp-fdate">Modified</span>' +
+    '<span class="scp-fperms">Perms</span>' +
+    '<span class="scp-fowner">Owner</span>';
+  list.appendChild(hdr);
+
   /* Parent dir link */
   if (currentPath !== '/') {
     var parent = currentPath.replace(/\/[^/]+\/?$/, '') || '/';
     var back = document.createElement('div');
     back.className = 'scp-file-row';
     back.innerHTML =
+      '<span style="width:15px;flex-shrink:0"></span>' +
       '<span class="scp-ico-dir"><i class="fa-solid fa-turn-up"></i></span>' +
-      '<span class="scp-fname scp-fname-dir">..</span>';
+      '<span class="scp-fname scp-fname-dir">..</span>' +
+      '<span class="scp-fsize"></span><span class="scp-fdate"></span>' +
+      '<span class="scp-fperms"></span><span class="scp-fowner"></span>';
     back.onclick = function(){ scpBrowse(parent); };
     list.appendChild(back);
   }
 
   if (!entries || !entries.length) {
-    list.innerHTML += '<div class="scp-empty"><i class="fa-solid fa-folder-open" style="margin-right:6px"></i>Empty directory</div>';
+    var empty = document.createElement('div');
+    empty.className = 'scp-empty';
+    empty.innerHTML = '<i class="fa-solid fa-folder-open" style="margin-right:6px"></i>Empty directory';
+    list.appendChild(empty);
     return;
   }
 
@@ -1674,17 +1849,16 @@ function scpRenderFiles(entries, currentPath) {
     var sizeStr  = isDir ? '' : scpFmtSize(e.size);
     var checked  = scpSelected.has(fullPath);
 
-    /* Count how many targets this file was deployed to */
-    var deployInfo = '';
+    /* Deploy history badge */
+    var deployBadge = '';
     if (!isDir) {
-      var okCount   = 0;
-      var failCount = 0;
+      var okCount = 0, failCount = 0;
       allHosts.filter(function(h){ return isLuckfox(h.comment); }).forEach(function(h) {
         var hist = scpHistoryGet(h.ip, fullPath);
         if (hist) { if (hist.status === 'ok') okCount++; else failCount++; }
       });
       if (okCount || failCount) {
-        deployInfo = '<span class="deploy-badge' + (failCount && !okCount ? ' fail' : '') + '">' +
+        deployBadge = '&nbsp;<span class="deploy-badge' + (failCount && !okCount ? ' fail' : '') + '">' +
           '<i class="fa-solid fa-circle-check"></i>&nbsp;' + okCount +
           (failCount ? '&nbsp;<i class="fa-solid fa-circle-xmark" style="color:#dc2626"></i>&nbsp;' + failCount : '') +
         '</span>';
@@ -1696,9 +1870,13 @@ function scpRenderFiles(entries, currentPath) {
     row.innerHTML =
       '<input type="checkbox"' + (checked ? ' checked' : '') + '>' +
       '<span class="' + icoClass + '"><i class="fa-solid ' + icoName + '"></i></span>' +
-      '<span class="scp-fname' + (isDir ? ' scp-fname-dir' : '') + '">' + escHtml(e.name) + (isDir ? '/' : '') + '</span>' +
+      '<span class="scp-fname' + (isDir ? ' scp-fname-dir' : '') + '">' +
+        escHtml(e.name) + (isDir ? '/' : '') + deployBadge +
+      '</span>' +
       '<span class="scp-fsize">' + sizeStr + '</span>' +
-      deployInfo;
+      '<span class="scp-fdate">' + escHtml(e.date  || '') + '</span>' +
+      '<span class="scp-fperms">' + escHtml(e.perms || '') + '</span>' +
+      '<span class="scp-fowner">' + escHtml(e.owner || '') + '</span>';
 
     var cb = row.querySelector('input');
     cb.addEventListener('change', function(ev) {
@@ -1720,6 +1898,14 @@ function scpRenderFiles(entries, currentPath) {
   });
 }
 
+function scpRefresh() {
+  if (!scpSourceIP || !scpPath) return;
+  var icon = document.getElementById('scp-refresh-icon');
+  icon.className = 'fa-solid fa-rotate fa-spin-custom';
+  setTimeout(function(){ icon.className = 'fa-solid fa-rotate'; }, 900);
+  scpBrowse(scpPath);
+}
+
 function scpFmtSize(b) {
   if (b >= 1048576) return (b/1048576).toFixed(1) + ' MB';
   if (b >= 1024)    return (b/1024).toFixed(1) + ' KB';
@@ -1729,30 +1915,22 @@ function scpFmtSize(b) {
 function scpUpdateSelCount() {
   var n = scpSelected.size;
   document.getElementById('scp-sel-count').textContent = n ? n + ' selected' : '';
+  var rmBtn = document.getElementById('scp-src-rm-btn');
+  var rnBtn = document.getElementById('scp-src-rename-btn');
+  if (rmBtn) rmBtn.disabled = n === 0;
+  if (rnBtn) rnBtn.disabled = n !== 1;
+  var ulBtn = document.getElementById('scp-upload-btn');
+  if (ulBtn) ulBtn.disabled = !(n > 0 && scpTgtIP);
 }
 
 function scpUpdateDeploy() {
-  var hasFiles = scpSelected.size > 0;
-  var enabled;
-  if (scpMode === 'multi-target') {
-    var hasTargets = document.querySelectorAll('.scp-tcb:checked').length > 0;
-    enabled = hasFiles && hasTargets;
-  } else {
-    enabled = hasFiles && scpMode2IP !== '' && scpMode2Dirs.size > 0;
-  }
-  document.getElementById('scp-deploy-btn').disabled = !enabled;
+  var hasFiles   = scpSelected.size > 0;
+  var hasTargets = document.querySelectorAll('.scp-tcb:checked').length > 0;
+  document.getElementById('scp-deploy-btn').disabled = !(hasFiles && hasTargets);
 
-  /* Update summary badge in card header */
-  if (scpMode === 'multi-target') {
-    var t = document.querySelectorAll('.scp-tcb:checked').length;
-    document.getElementById('scp-summary').textContent =
-      (scpSelected.size || t) ? scpSelected.size + ' file(s)  \u2192  ' + t + ' target(s)' : '';
-  } else {
-    document.getElementById('scp-summary').textContent =
-      (scpSelected.size && scpMode2Dirs.size)
-        ? scpSelected.size + ' file(s)  \u2192  ' + scpMode2Dirs.size + ' dir(s) on ' + scpMode2IP
-        : '';
-  }
+  var t = document.querySelectorAll('.scp-tcb:checked').length;
+  document.getElementById('scp-summary').textContent =
+    (hasFiles || t) ? scpSelected.size + ' file(s)  \u2192  ' + t + ' target(s)' : '';
 }
 
 function deployMultiSCP() {
@@ -2069,6 +2247,340 @@ function scpMode2UpdateDirCount() {
   var n  = scpMode2Dirs.size;
   var el = document.getElementById('scp-mode2-dir-count');
   if (el) el.textContent = n ? n + ' dir(s) selected' : '';
+}
+
+/* ── Source panel path/actions ──────────────────────────────────────────── */
+
+function scpSrcGo() {
+  var v = document.getElementById('scp-src-path-input').value.trim();
+  if (!v) return;
+  if (v[0] !== '/') v = '/' + v;
+  scpBrowse(v);
+}
+
+function scpSrcMkdir() {
+  if (!scpSourceIP) return;
+  var name = prompt('New folder name:');
+  if (!name || !name.trim()) return;
+  name = name.trim().replace(/['";&|`$\n\r]/g, '');
+  if (!name) return;
+  var path = scpPath.replace(/\/$/, '') + '/' + name;
+  fetch('/api/mkdir', { method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: 'ip=' + encodeURIComponent(scpSourceIP) + '&path=' + encodeURIComponent(path)
+  }).then(function(r){ return r.json(); })
+    .then(function(d){ if (d.error) alert('Error: ' + d.error); else scpBrowse(scpPath); })
+    .catch(function(e){ alert('Error: ' + e.message); });
+}
+
+function scpSrcRm() {
+  var files = Array.from(scpSelected);
+  if (!files.length || !scpSourceIP) return;
+  if (!confirm('Remove ' + files.length + ' item(s) from ' + scpSourceIP + '?\n\n' + files.slice(0,6).join('\n'))) return;
+  Promise.all(files.map(function(p) {
+    return fetch('/api/rm', { method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'ip=' + encodeURIComponent(scpSourceIP) + '&path=' + encodeURIComponent(p)
+    }).then(function(r){ return r.json(); });
+  })).then(function(res) {
+    var errs = res.filter(function(d){ return d.error; });
+    if (errs.length) alert('Some failed:\n' + errs.map(function(d){ return d.error; }).join('\n'));
+    scpSelected.clear(); scpUpdateSelCount(); scpBrowse(scpPath);
+  }).catch(function(e){ alert('Error: ' + e.message); });
+}
+
+function scpSrcRename() {
+  var files = Array.from(scpSelected);
+  if (files.length !== 1 || !scpSourceIP) return;
+  var oldPath = files[0];
+  var oldName = oldPath.split('/').pop();
+  var newName = prompt('Rename to:', oldName);
+  if (!newName || !newName.trim() || newName === oldName) return;
+  newName = newName.trim().replace(/['";&|`$\n\r\/]/g, '');
+  var newPath = oldPath.substring(0, oldPath.lastIndexOf('/') + 1) + newName;
+  fetch('/api/rename', { method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: 'ip=' + encodeURIComponent(scpSourceIP) + '&from=' + encodeURIComponent(oldPath) + '&to=' + encodeURIComponent(newPath)
+  }).then(function(r){ return r.json(); })
+    .then(function(d){ if (d.error) alert('Error: ' + d.error); else { scpSelected.clear(); scpUpdateSelCount(); scpBrowse(scpPath); }})
+    .catch(function(e){ alert('Error: ' + e.message); });
+}
+
+/* ── Target panel ───────────────────────────────────────────────────────── */
+
+function scpPopulateTargetSel() {
+  var sel = document.getElementById('scp-target-sel');
+  if (!sel) return;
+  var prev = sel.value;
+  sel.innerHTML = '<option value="">— select target device —</option>';
+  allHosts.forEach(function(h) {
+    var opt = document.createElement('option');
+    opt.value = h.ip;
+    opt.textContent = h.ip +
+      (h.comment  ? '  \u2014 ' + h.comment : '') +
+      (h.hostname && h.hostname !== h.ip ? '  [' + h.hostname + ']' : '');
+    sel.appendChild(opt);
+  });
+  var cust = document.createElement('option');
+  cust.value = '__custom__'; cust.textContent = '— custom IP... —';
+  sel.appendChild(cust);
+  if (prev) sel.value = prev;
+}
+
+function onTargetChange() {
+  var val = document.getElementById('scp-target-sel').value;
+  if (!val || val === '__custom__') return;
+  scpTgtIP   = val;
+  scpTgtPath = '/root';
+  scpTgtSel.clear();
+  scpTgtUpdateSelCount();
+  document.getElementById('scp-tgt-path-bar').style.display    = '';
+  document.getElementById('scp-tgt-actions').style.display     = '';
+  document.getElementById('scp-tgt-refresh-btn').style.display = '';
+  scpTgtBrowse('/root');
+  /* re-evaluate upload/download now that we have a target */
+  scpUpdateSelCount();
+}
+
+function scpTgtBrowse(path) {
+  if (!scpTgtIP) return;
+  scpTgtPath = path;
+  document.getElementById('scp-tgt-path-input').value = path;
+  scpTgtRenderBreadcrumb(path);
+  document.getElementById('scp-tgt-filelist').innerHTML =
+    '<div class="scp-loading"><i class="fa-solid fa-spinner fa-spin-custom"></i>&nbsp; Loading...</div>';
+  fetch('/api/browse?ip=' + encodeURIComponent(scpTgtIP) + '&path=' + encodeURIComponent(path))
+    .then(function(r){ return r.json(); })
+    .then(function(data) {
+      if (data.error) {
+        document.getElementById('scp-tgt-filelist').innerHTML =
+          '<div class="scp-empty"><i class="fa-solid fa-triangle-exclamation" style="color:#dc2626;margin-right:6px"></i>' +
+          escHtml(data.error.substring(0, 200)) + '</div>';
+        return;
+      }
+      scpTgtRenderFiles(data.entries, path);
+    })
+    .catch(function(e) {
+      document.getElementById('scp-tgt-filelist').innerHTML =
+        '<div class="scp-empty">Error: ' + escHtml(e.message) + '</div>';
+    });
+}
+
+function scpTgtRenderBreadcrumb(path) {
+  var parts = path.split('/').filter(Boolean);
+  var bc = document.getElementById('scp-tgt-breadcrumb');
+  bc.innerHTML = '';
+  var root = document.createElement('a');
+  root.innerHTML = '<i class="fa-solid fa-microchip"></i>&nbsp;/';
+  root.onclick = function(){ scpTgtBrowse('/'); };
+  bc.appendChild(root);
+  var cum = '';
+  parts.forEach(function(part, i) {
+    cum += '/' + part;
+    bc.appendChild(document.createTextNode('\u00a0/\u00a0'));
+    if (i === parts.length - 1) {
+      var s = document.createElement('span');
+      s.textContent = part; s.style.fontWeight = '600'; s.style.color = '#111827';
+      bc.appendChild(s);
+    } else {
+      var a = document.createElement('a');
+      a.textContent = part;
+      (function(p){ a.onclick = function(){ scpTgtBrowse(p); }; })(cum);
+      bc.appendChild(a);
+    }
+  });
+}
+
+function scpTgtRenderFiles(entries, currentPath) {
+  var list = document.getElementById('scp-tgt-filelist');
+  list.innerHTML = '';
+
+  var hdr = document.createElement('div');
+  hdr.className = 'scp-col-hdr';
+  hdr.innerHTML =
+    '<span style="width:15px;flex-shrink:0"></span>' +
+    '<span style="width:14px;flex-shrink:0"></span>' +
+    '<span class="scp-fname">Name</span>' +
+    '<span class="scp-fsize">Size</span>' +
+    '<span class="scp-fdate">Modified</span>' +
+    '<span class="scp-fperms">Rights</span>' +
+    '<span class="scp-fowner">Owner</span>';
+  list.appendChild(hdr);
+
+  if (currentPath !== '/') {
+    var parent = currentPath.replace(/\/[^/]+\/?$/, '') || '/';
+    var back = document.createElement('div');
+    back.className = 'scp-file-row';
+    back.innerHTML =
+      '<span style="width:15px;flex-shrink:0"></span>' +
+      '<span class="scp-ico-dir"><i class="fa-solid fa-turn-up"></i></span>' +
+      '<span class="scp-fname scp-fname-dir">..</span>' +
+      '<span class="scp-fsize"></span><span class="scp-fdate"></span>' +
+      '<span class="scp-fperms"></span><span class="scp-fowner"></span>';
+    back.onclick = function(){ scpTgtBrowse(parent); };
+    list.appendChild(back);
+  }
+
+  if (!entries || !entries.length) {
+    var empty = document.createElement('div');
+    empty.className = 'scp-empty';
+    empty.innerHTML = '<i class="fa-solid fa-folder-open" style="margin-right:6px"></i>Empty directory';
+    list.appendChild(empty);
+    return;
+  }
+
+  var dirs  = entries.filter(function(e){ return e.type === 'd'; });
+  var files = entries.filter(function(e){ return e.type !== 'd'; });
+  dirs.concat(files).forEach(function(e) {
+    var fullPath = currentPath.replace(/\/$/, '') + '/' + e.name;
+    var isDir    = e.type === 'd';
+    var icoClass = isDir ? 'scp-ico-dir' : (e.type === 'l' ? 'scp-ico-link' : 'scp-ico-file');
+    var icoName  = isDir ? 'fa-folder'   : (e.type === 'l' ? 'fa-link'      : 'fa-file');
+    var sizeStr  = isDir ? '' : scpFmtSize(e.size);
+    var checked  = scpTgtSel.has(fullPath);
+
+    var row = document.createElement('div');
+    row.className = 'scp-file-row';
+    row.innerHTML =
+      '<input type="checkbox"' + (checked ? ' checked' : '') + '>' +
+      '<span class="' + icoClass + '"><i class="fa-solid ' + icoName + '"></i></span>' +
+      '<span class="scp-fname' + (isDir ? ' scp-fname-dir' : '') + '">' +
+        escHtml(e.name) + (isDir ? '/' : '') +
+      '</span>' +
+      '<span class="scp-fsize">' + sizeStr + '</span>' +
+      '<span class="scp-fdate">'  + escHtml(e.date  || '') + '</span>' +
+      '<span class="scp-fperms">' + escHtml(e.perms || '') + '</span>' +
+      '<span class="scp-fowner">' + escHtml(e.owner || '') + '</span>';
+
+    var cb = row.querySelector('input');
+    cb.addEventListener('change', function(ev) {
+      ev.stopPropagation();
+      if (cb.checked) scpTgtSel.add(fullPath); else scpTgtSel.delete(fullPath);
+      scpTgtUpdateSelCount();
+    });
+    row.onclick = function(ev) {
+      if (ev.target === cb) return;
+      if (isDir) {
+        scpTgtBrowse(fullPath);
+      } else {
+        cb.checked = !cb.checked;
+        if (cb.checked) scpTgtSel.add(fullPath); else scpTgtSel.delete(fullPath);
+        scpTgtUpdateSelCount();
+      }
+    };
+    list.appendChild(row);
+  });
+}
+
+function scpTgtUpdateSelCount() {
+  var n = scpTgtSel.size;
+  document.getElementById('scp-tgt-sel-count').textContent = n ? n + ' selected' : '';
+  var rmBtn = document.getElementById('scp-tgt-rm-btn');
+  var rnBtn = document.getElementById('scp-tgt-rename-btn');
+  if (rmBtn) rmBtn.disabled = n === 0;
+  if (rnBtn) rnBtn.disabled = n !== 1;
+}
+
+function scpTgtRefresh() {
+  if (!scpTgtIP || !scpTgtPath) return;
+  var icon = document.getElementById('scp-tgt-refresh-icon');
+  if (icon) { icon.className = 'fa-solid fa-rotate fa-spin-custom'; setTimeout(function(){ icon.className = 'fa-solid fa-rotate'; }, 900); }
+  scpTgtBrowse(scpTgtPath);
+}
+
+function scpTgtGo() {
+  var v = document.getElementById('scp-tgt-path-input').value.trim();
+  if (!v) return;
+  if (v[0] !== '/') v = '/' + v;
+  scpTgtBrowse(v);
+}
+
+function scpTgtMkdir() {
+  if (!scpTgtIP) return;
+  var name = prompt('New folder name:');
+  if (!name || !name.trim()) return;
+  name = name.trim().replace(/['";&|`$\n\r]/g, '');
+  if (!name) return;
+  var path = scpTgtPath.replace(/\/$/, '') + '/' + name;
+  fetch('/api/mkdir', { method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: 'ip=' + encodeURIComponent(scpTgtIP) + '&path=' + encodeURIComponent(path)
+  }).then(function(r){ return r.json(); })
+    .then(function(d){ if (d.error) alert('Error: ' + d.error); else scpTgtBrowse(scpTgtPath); })
+    .catch(function(e){ alert('Error: ' + e.message); });
+}
+
+function scpTgtRm() {
+  var files = Array.from(scpTgtSel);
+  if (!files.length || !scpTgtIP) return;
+  if (!confirm('Remove ' + files.length + ' item(s) from ' + scpTgtIP + '?\n\n' + files.slice(0,6).join('\n'))) return;
+  Promise.all(files.map(function(p) {
+    return fetch('/api/rm', { method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'ip=' + encodeURIComponent(scpTgtIP) + '&path=' + encodeURIComponent(p)
+    }).then(function(r){ return r.json(); });
+  })).then(function(res) {
+    var errs = res.filter(function(d){ return d.error; });
+    if (errs.length) alert('Some failed:\n' + errs.map(function(d){ return d.error; }).join('\n'));
+    scpTgtSel.clear(); scpTgtUpdateSelCount(); scpTgtBrowse(scpTgtPath);
+  }).catch(function(e){ alert('Error: ' + e.message); });
+}
+
+function scpTgtRename() {
+  var files = Array.from(scpTgtSel);
+  if (files.length !== 1 || !scpTgtIP) return;
+  var oldPath = files[0];
+  var oldName = oldPath.split('/').pop();
+  var newName = prompt('Rename to:', oldName);
+  if (!newName || !newName.trim() || newName === oldName) return;
+  newName = newName.trim().replace(/['";&|`$\n\r\/]/g, '');
+  var newPath = oldPath.substring(0, oldPath.lastIndexOf('/') + 1) + newName;
+  fetch('/api/rename', { method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: 'ip=' + encodeURIComponent(scpTgtIP) + '&from=' + encodeURIComponent(oldPath) + '&to=' + encodeURIComponent(newPath)
+  }).then(function(r){ return r.json(); })
+    .then(function(d){ if (d.error) alert('Error: ' + d.error); else { scpTgtSel.clear(); scpTgtUpdateSelCount(); scpTgtBrowse(scpTgtPath); }})
+    .catch(function(e){ alert('Error: ' + e.message); });
+}
+
+function deployToHere() {
+  var files = Array.from(scpSelected);
+  if (!files.length || !scpSourceIP || !scpTgtIP) return;
+  var dest = scpTgtPath || '/root';
+  if (dest[dest.length - 1] !== '/') dest += '/';
+
+  var dlBtn = document.getElementById('scp-download-btn');
+  var ulBtn = document.getElementById('scp-upload-btn');
+  if (dlBtn) dlBtn.disabled = true;
+  if (ulBtn) ulBtn.disabled = true;
+
+  fetch('/api/multi-scp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode: 'multi-target', source_ip: scpSourceIP,
+      source_paths: files, target_ips: [scpTgtIP], target_dir: dest })
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(data) {
+    if (data.error) { alert('Transfer error: ' + data.error); return; }
+    var r = data.results[0];
+    if (r.status === 'ok') {
+      scpTgtBrowse(scpTgtPath);
+    } else {
+      alert('Transfer failed:\n' + r.output.substring(0, 400));
+    }
+  })
+  .catch(function(e){ alert('Error: ' + e.message); })
+  .finally(function(){ scpUpdateSelCount(); });
+}
+
+function toggleMultiDeploy() {
+  var body = document.getElementById('multi-deploy-body');
+  var chev = document.getElementById('multi-deploy-chevron');
+  var open = body.style.display !== 'none';
+  body.style.display = open ? 'none' : '';
+  chev.style.transform = open ? '' : 'rotate(90deg)';
+  if (!open) { scpPopulateTargets(); scpUpdateSelCount(); }
 }
 
 /* ── SCP Source button ──────────────────────────────────────────────────── */

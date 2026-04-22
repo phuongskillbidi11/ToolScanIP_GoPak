@@ -78,8 +78,9 @@ deploy: $(PI_TARGET)
 	scp $(PI_TARGET)         $(PI_HOST):/tmp/ipscanner_new
 	ssh $(PI_HOST) "mv /tmp/ipscanner_new $(PI_DIR)/ipscanner && chmod +x $(PI_DIR)/ipscanner"
 	ssh $(PI_HOST) "mkdir -p $(PI_DIR)/scripts"
-	scp scripts/gen-nginx.sh          $(PI_HOST):$(PI_DIR)/scripts/gen-nginx.sh
-	scp scripts/fetch-machine-names.sh $(PI_HOST):$(PI_DIR)/scripts/fetch-machine-names.sh
+	scp scripts/gen-nginx.sh              $(PI_HOST):$(PI_DIR)/scripts/gen-nginx.sh
+	scp scripts/fetch-machine-names.sh    $(PI_HOST):$(PI_DIR)/scripts/fetch-machine-names.sh
+	scp scripts/mqtt-sync-comments.sh     $(PI_HOST):$(PI_DIR)/scripts/mqtt-sync-comments.sh
 	ssh $(PI_HOST) "chmod +x $(PI_DIR)/scripts/*.sh && ln -sf $(PI_DIR)/scripts/gen-nginx.sh $(PI_DIR)/gen-nginx.sh"
 	@echo ""
 	@echo "  Done. On the Pi:"
@@ -94,8 +95,9 @@ deploy2: $(PI_TARGET)
 	scp $(PI_TARGET)          $(PI2_HOST):/tmp/ipscanner_new
 	ssh $(PI2_HOST) "mv /tmp/ipscanner_new $(PI2_DIR)/ipscanner && chmod +x $(PI2_DIR)/ipscanner"
 	ssh $(PI2_HOST) "mkdir -p $(PI2_DIR)/scripts"
-	scp scripts/gen-nginx.sh           $(PI2_HOST):$(PI2_DIR)/scripts/gen-nginx.sh
-	scp scripts/fetch-machine-names.sh $(PI2_HOST):$(PI2_DIR)/scripts/fetch-machine-names.sh
+	scp scripts/gen-nginx.sh              $(PI2_HOST):$(PI2_DIR)/scripts/gen-nginx.sh
+	scp scripts/fetch-machine-names.sh    $(PI2_HOST):$(PI2_DIR)/scripts/fetch-machine-names.sh
+	scp scripts/mqtt-sync-comments.sh     $(PI2_HOST):$(PI2_DIR)/scripts/mqtt-sync-comments.sh
 	ssh $(PI2_HOST) "chmod +x $(PI2_DIR)/scripts/*.sh && ln -sf $(PI2_DIR)/scripts/gen-nginx.sh $(PI2_DIR)/gen-nginx.sh"
 	@echo ""
 	@echo "  Done. On Pi #2 (intercom/wlan0):"

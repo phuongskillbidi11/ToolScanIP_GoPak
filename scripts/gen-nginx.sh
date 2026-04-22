@@ -1,6 +1,7 @@
 #!/bin/bash
 # gen-nginx.sh — Scan network, generate nginx reverse-proxy config for Luckfox devices
-# Usage: sudo ./gen-nginx.sh [interface]
+# Usage: sudo ./gen-nginx.sh [eth0]
+#        sudo ./gen-nginx.sh -i eth0   (also accepted)
 
 _SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Binary lives next to script (symlink case) or one level up (scripts/ subdir case)
@@ -12,7 +13,12 @@ else
     echo "Error: ipscanner binary not found (looked in $_SCRIPT_DIR and $_SCRIPT_DIR/../)"
     exit 1
 fi
-IFACE="${1:-eth0}"
+# Accept both: ./gen-nginx.sh eth0  and  ./gen-nginx.sh -i eth0
+if [ "$1" = "-i" ] && [ -n "$2" ]; then
+    IFACE="$2"
+else
+    IFACE="${1:-eth0}"
+fi
 JSON_TMP="/tmp/ipscan_result.json"
 NGINX_PROXY="/etc/nginx/conf.d/ipscan-proxy.conf"
 NGINX_LANDING="/etc/nginx/conf.d/ipscan-landing.conf"

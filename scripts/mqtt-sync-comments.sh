@@ -15,6 +15,10 @@ IFACE="${1:-eth0}"
 WAIT="${2:-30}"          # seconds to listen for MQTT messages
 JSON_TMP="/tmp/ipscan_result.json"
 
+# MQTT map file lives next to the comments file in the real user's home
+_REAL_HOME="$(eval echo ~${SUDO_USER:-$USER})"
+MQTT_MAP="${_REAL_HOME}/.ipscanner.mqttmap"
+
 # ── MQTT broker credentials ───────────────────────────────────────────────────
 MQTT_HOST="vm01.i-soft.com.vn"
 MQTT_PORT="11883"
@@ -72,8 +76,9 @@ python3 << PYEOF
 import json, re, subprocess, sys
 
 SCANNER  = "$SCANNER"
-JSON_TMP = "$MQTT_LOG"      # not the JSON — handled separately
 ARP_JSON = "$JSON_TMP"
+MQTT_LOG = "$MQTT_LOG"
+MQTT_MAP = "$MQTT_MAP"
 
 # Load ARP scan: build ip → mac dict
 with open(ARP_JSON) as f:
@@ -84,14 +89,13 @@ ip_to_mac = {h['ip']: h['mac'] for h in hosts}
 # Parse MQTT log: each line is "topic<TAB>payload"
 updates = {}   # machine_name → {ip, mac, comment}
 
-with open("$MQTT_LOG") as f:
+with open(MQTT_LOG) as f:
     for line in f:
         line = line.strip()
         if '\t' not in line:
             continue
         topic, payload = line.split('\t', 1)
 
-        # Extract machine_name from topic last segment
         machine_name = topic.split('/')[-1].strip()
         if not machine_name:
             continue
@@ -113,9 +117,9 @@ with open("$MQTT_LOG") as f:
         formatted = re.sub(r'\s*(\[GM)', r' \1', machine_name).strip()
         comment   = f"Line {formatted}"
 
-        # Find MAC for this IP
         mac = ip_to_mac.get(local_ip)
 
+        # Keep the most recent entry per machine name
         updates[machine_name] = {
             'ip':      local_ip,
             'mac':     mac,
@@ -127,8 +131,8 @@ if not updates:
     print("  No LocalIP data found in MQTT messages.")
     sys.exit(0)
 
-updated = 0
-no_mac  = 0
+updated_mac = 0
+skipped     = 0
 
 for mn, info in sorted(updates.items()):
     ip      = info['ip']
@@ -141,18 +145,20 @@ for mn, info in sorted(updates.items()):
 
     if mac:
         print(f"    MAC        : {mac}")
-        print(f"    Saving     : {mac}={comment}")
-        subprocess.run([SCANNER, '-C', f'{mac}={comment}'], capture_output=True)
-        updated += 1
+        print(f"    Writing    : {mac}={comment}  →  {MQTT_MAP}")
+        # Write to mqttmap file (not the manual comments file)
+        subprocess.run([SCANNER, '-f', MQTT_MAP, '-C', f'{mac}={comment}'],
+                       capture_output=True)
+        updated_mac += 1
     else:
-        print(f"    MAC        : not in ARP scan (device may be offline)")
-        # Save by IP as fallback
-        print(f"    Saving     : {ip}={comment}  (IP fallback)")
-        subprocess.run([SCANNER, '-C', f'{ip}={comment}'], capture_output=True)
-        no_mac += 1
+        # Device not seen in ARP scan — skip rather than creating an IP fallback.
+        # Register MAC placeholder so the next sync can fill it in.
+        print(f"    MAC        : not in ARP scan — device offline, skipping")
+        skipped += 1
 
     print()
 
-print(f"Done: {updated} saved by MAC, {no_mac} saved by IP (fallback).")
+print(f"Done: {updated_mac} saved to {MQTT_MAP}, {skipped} skipped (offline).")
+print(f"Manual labels in ~/.ipscanner.comments always override MQTT labels.")
 print(f"Run 'sudo ./gen-nginx.sh' or click Rescan to refresh the dashboard.")
 PYEOF

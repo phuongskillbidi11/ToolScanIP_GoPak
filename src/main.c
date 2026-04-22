@@ -84,8 +84,10 @@ int main(int argc, char *argv[])
 {
     char iface[IFNAMSIZ] = "eth0";
     char comments_file[256];
+    char mqttmap_file[256];
     char save_key[64]   = "";
     char save_val[128]  = "";
+    char save_to_mqttmap = 0; /* 1 = register MAC only (no =comment) */
     char ssh_user[64]   = "root";
     char ssh_pass[128]  = "";
     char json_file[256] = "";
@@ -93,6 +95,7 @@ int main(int argc, char *argv[])
     int  opt;
 
     default_comments_path(comments_file, sizeof(comments_file));
+    mqttmap_path_from_comments(comments_file, mqttmap_file, sizeof(mqttmap_file));
 
     while ((opt = getopt(argc, argv, "i:C:f:U:P:w:j:lh")) != -1) {
         switch (opt) {
@@ -118,16 +121,19 @@ int main(int argc, char *argv[])
         case 'C': {
             char *eq = strchr(optarg, '=');
             if (!eq) {
-                fprintf(stderr, "Error: -C requires key=comment format\n");
-                return 1;
+                /* No '=' → register MAC in mqttmap (MQTT will fill the label) */
+                snprintf(save_key, sizeof(save_key), "%s", optarg);
+                save_to_mqttmap = 1;
+            } else {
+                *eq = '\0';
+                snprintf(save_key, sizeof(save_key), "%s", optarg);
+                snprintf(save_val, sizeof(save_val), "%s", eq + 1);
             }
-            *eq = '\0';
-            snprintf(save_key, sizeof(save_key), "%s", optarg);
-            snprintf(save_val, sizeof(save_val), "%s", eq + 1);
             break;
         }
         case 'f':
             snprintf(comments_file, sizeof(comments_file), "%s", optarg);
+            mqttmap_path_from_comments(comments_file, mqttmap_file, sizeof(mqttmap_file));
             break;
         case 'l':
             list_interfaces();
@@ -139,15 +145,22 @@ int main(int argc, char *argv[])
         }
     }
 
-    /* Save comment — no root needed */
+    /* Save comment or register MAC — no root needed */
     if (save_key[0]) {
-        comments_load(comments_file);
-        if (comments_save(comments_file, save_key, save_val) == 0)
-            printf("Saved: %s = %s\n  File: %s\n",
-                   save_key, save_val, comments_file);
-        else
-            fprintf(stderr, "Error: could not write to %s\n", comments_file);
-        comments_free();
+        if (save_to_mqttmap) {
+            /* -C MAC (no =) → register in mqttmap for MQTT to fill */
+            if (mqttmap_register(mqttmap_file, save_key) != 0)
+                fprintf(stderr, "Error: could not write to %s\n", mqttmap_file);
+        } else {
+            /* -C MAC=comment → save manual comment */
+            comments_load(comments_file, 2);
+            if (comments_save(comments_file, save_key, save_val) == 0)
+                printf("Saved: %s = %s\n  File: %s\n",
+                       save_key, save_val, comments_file);
+            else
+                fprintf(stderr, "Error: could not write to %s\n", comments_file);
+            comments_free();
+        }
         return 0;
     }
 
@@ -167,7 +180,8 @@ int main(int argc, char *argv[])
 
     display_header();
     oui_init();
-    comments_load(comments_file);
+    comments_load(mqttmap_file, 1);   /* lower priority: auto from MQTT */
+    comments_load(comments_file, 2);  /* higher priority: manual overrides */
 
     /* (comments already saved above if -C was given) */
 

@@ -14,8 +14,8 @@
  * MAC takes priority over IP when both match.
  */
 
-/* Load comments file into memory. Call once before comments_apply(). */
-void comments_load(const char *path);
+/* Load comments file into memory. source: 1=mqtt, 2=manual. */
+void comments_load(const char *path, int source);
 
 /* Apply loaded comments to all hosts in result. */
 void comments_apply(ScanResult *result);
@@ -25,6 +25,16 @@ int comments_save(const char *path, const char *key, const char *comment);
 
 /* Delete the comment for key. Returns 0 on success, -1 on error. */
 int comments_delete(const char *path, const char *key);
+
+/* Register a MAC in the MQTT map file without a comment.
+ * Does nothing if the MAC is already present. No-op if mac is empty.
+ * The MQTT sync script fills in the comment later. */
+int mqttmap_register(const char *path, const char *mac);
+
+/* Derive the mqttmap path from the comments path.
+ * ~/.ipscanner.comments → ~/.ipscanner.mqttmap */
+void mqttmap_path_from_comments(const char *comments_path,
+                                char *out, size_t outlen);
 
 /* Free memory used by comments. */
 void comments_free(void);

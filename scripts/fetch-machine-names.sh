@@ -1,22 +1,23 @@
 #!/bin/bash
 # fetch-machine-names.sh
-# SSH into each online Luckfox device, read /var/lib/luckfox/mqtt_mapping.txt,
-# extract machine_name, and update ~/.ipscanner.comments by MAC address.
+# SSH into every online host, try to read /var/lib/luckfox/mqtt_mapping.txt,
+# and update ~/.ipscanner.comments by MAC address.
+#
+# Behaviour:
+#   - No placeholder comment needed — tries ALL online hosts
+#   - No existing comment  → saves device label automatically
+#   - Comment matches device → skips (prints OK)
+#   - Comment differs from device → asks user to confirm update
 #
 # Usage: sudo ./scripts/fetch-machine-names.sh [interface]
 #
-# Requirements: sshpass
+# Requirements: sshpass  (sudo apt install sshpass)
 
-# Binary is at ../ipscanner (Pi) or ../build/ipscanner (local dev)
 _DIR="$(cd "$(dirname "$0")" && pwd)"
-if [ -x "$_DIR/../ipscanner" ]; then
-    SCANNER="$_DIR/../ipscanner"
-elif [ -x "$_DIR/../build/ipscanner" ]; then
-    SCANNER="$_DIR/../build/ipscanner"
-else
-    echo "Error: ipscanner binary not found"
-    exit 1
-fi
+if   [ -x "$_DIR/../ipscanner" ];       then SCANNER="$_DIR/../ipscanner"
+elif [ -x "$_DIR/../build/ipscanner" ]; then SCANNER="$_DIR/../build/ipscanner"
+else echo "Error: ipscanner binary not found"; exit 1; fi
+
 IFACE="${1:-eth0}"
 JSON_TMP="/tmp/ipscan_result.json"
 SSH_PASS="luckfox"
@@ -27,95 +28,92 @@ MQTT_FILE="/var/lib/luckfox/mqtt_mapping.txt"
 echo "[1/2] Scanning $IFACE ..."
 "$SCANNER" -i "$IFACE" -j "$JSON_TMP"
 
-# ── 2. SSH into each Luckfox device and fetch machine_name ───────────────────
+# ── 2. SSH into each host and fetch machine_name ──────────────────────────────
 echo "[2/2] Fetching machine names from devices ..."
 echo ""
 
 python3 << PYEOF
 import json, subprocess, re, sys
 
-SCANNER  = "$SCANNER"
-SSH_USER = "$SSH_USER"
-SSH_PASS = "$SSH_PASS"
+SCANNER   = "$SCANNER"
+SSH_USER  = "$SSH_USER"
+SSH_PASS  = "$SSH_PASS"
 MQTT_FILE = "$MQTT_FILE"
 
 with open("$JSON_TMP") as f:
     hosts = json.load(f)
 
-# Only process devices that look like Luckfox (Line + [GM in comment)
-devices = [h for h in hosts
-           if 'Line' in h.get('comment','') and '[GM' in h.get('comment','')]
-
-if not devices:
-    print("  No Luckfox devices found. Make sure they have 'Line' and '[GM' comments.")
-    sys.exit(0)
-
+added   = 0
 updated = 0
-failed  = 0
+kept    = 0
 
-for h in devices:
+for h in hosts:
     ip      = h['ip']
     mac     = h['mac']
-    old_cmt = h.get('comment','').strip()
+    old_cmt = h.get('comment', '').strip()
 
-    print(f"  {ip}  ({old_cmt})")
-
+    # Try SSH into every host — non-Luckfox devices will fail silently
     try:
-        result = subprocess.run(
+        r = subprocess.run(
             ['sshpass', '-p', SSH_PASS,
              'ssh',
              '-o', 'StrictHostKeyChecking=no',
-             '-o', 'ConnectTimeout=5',
+             '-o', 'ConnectTimeout=3',
              f'{SSH_USER}@{ip}',
              f'cat {MQTT_FILE}'],
-            capture_output=True, text=True, timeout=10
+            capture_output=True, text=True, timeout=8
         )
+        if r.returncode != 0:
+            continue   # not a Luckfox or unreachable — skip silently
 
-        if result.returncode != 0:
-            print(f"    SSH failed: {result.stderr.strip() or 'no output'}")
-            failed += 1
-            continue
-
-        data = json.loads(result.stdout)
+        data         = json.loads(r.stdout)
         machine_name = data.get('machine_name', '').strip()
-
         if not machine_name:
-            print(f"    No machine_name in {MQTT_FILE}")
-            failed += 1
             continue
 
-        # Format: "3[GM7]" → "Line 3 [GM7]", "3A[GM6]" → "Line 3A [GM6]"
-        # Ensure exactly one space before [GM
-        formatted = re.sub(r'\s*(\[GM)', r' \1', machine_name).strip()
-        comment = f"Line {formatted}"
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, Exception):
+        continue
 
-        # MQTT topic this device publishes to
-        topic = f"iSoft/GoPak/LineCup/Info/{machine_name}"
+    # Format machine_name → "Line X [GMY]"
+    formatted = re.sub(r'\s*(\[GM)', r' \1', machine_name).strip()
+    new_cmt   = f"Line {formatted}"
 
-        print(f"    machine_name : {machine_name}")
-        print(f"    MQTT topic   : {topic}")
-        print(f"    Comment      : {comment}")
+    print(f"  {ip}  (MAC: {mac})")
+    print(f"    Device label : {new_cmt}  (from {MQTT_FILE})")
 
-        # Update comment by MAC (stable key)
-        subprocess.run(
-            [SCANNER, '-C', f'{mac}={comment}'],
-            capture_output=True
-        )
-        print(f"    Saved to comments file")
-        updated += 1
+    if not old_cmt:
+        # No comment yet → add automatically
+        subprocess.run([SCANNER, '-C', f'{mac}={new_cmt}'], capture_output=True)
+        print(f"    Added        : {new_cmt}")
+        added += 1
 
-    except json.JSONDecodeError:
-        print(f"    Could not parse {MQTT_FILE} — invalid JSON")
-        failed += 1
-    except subprocess.TimeoutExpired:
-        print(f"    Timeout connecting to {ip}")
-        failed += 1
-    except Exception as e:
-        print(f"    Error: {e}")
-        failed += 1
+    elif old_cmt.lower() == new_cmt.lower():
+        # Already correct → skip
+        print(f"    OK (matches) : {old_cmt}")
+        kept += 1
+
+    else:
+        # Mismatch → ask user
+        print(f"    Current label: {old_cmt}")
+        print(f"    Conflict: device says '{new_cmt}', file says '{old_cmt}'")
+        try:
+            with open('/dev/tty') as tty:
+                sys.stdout.write(f"    Update to '{new_cmt}'? [y/N] ")
+                sys.stdout.flush()
+                ans = tty.readline().strip().lower()
+        except Exception:
+            ans = 'n'
+
+        if ans == 'y':
+            subprocess.run([SCANNER, '-C', f'{mac}={new_cmt}'], capture_output=True)
+            print(f"    Updated to   : {new_cmt}")
+            updated += 1
+        else:
+            print(f"    Kept         : {old_cmt}")
+            kept += 1
 
     print()
 
-print(f"Done: {updated} updated, {failed} failed.")
+print(f"Done: {added} added, {updated} updated, {kept} unchanged.")
 print(f"Run 'sudo ./gen-nginx.sh' or click Rescan on the dashboard to refresh.")
 PYEOF
