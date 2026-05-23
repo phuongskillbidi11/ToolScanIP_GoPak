@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <stdarg.h>
 #include <string.h>
+#include <ctype.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <time.h>
@@ -15,6 +16,10 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <dirent.h>
+#include <errno.h>
+#include <stdint.h>
+#include <sys/statvfs.h>
 
 /* Embedded HTML — generated at build time by:
  *   xxd -i web/scanner.html | sed ... > src/scanner_html.h  */
@@ -27,6 +32,27 @@ static char       g_iface[64];
 static char       g_comments_file[256];
 static char       g_mqttmap_file[256];
 static char       g_last_scan[64];
+
+#define SYSMON_MAX_PROCS 256
+
+typedef struct {
+    int pid;
+    unsigned long long ticks;
+} SysMonPrevProc;
+
+typedef struct {
+    int pid;
+    char name[64];
+    char state;
+    unsigned long long ticks;
+    double cpu_pct;
+} SysMonProcRow;
+
+static SysMonPrevProc g_sysmon_prev[SYSMON_MAX_PROCS];
+static int g_sysmon_prev_count = 0;
+static unsigned long long g_sysmon_prev_total = 0;
+static unsigned long long g_sysmon_prev_idle = 0;
+static int g_sysmon_have_prev_cpu = 0;
 
 static void do_scan(void)
 {
@@ -84,6 +110,202 @@ static void json_str(int fd, const char *s)
         else { char c[2] = {*s, '\0'}; wstr(fd, c); }
     }
     wstr(fd, "\"");
+}
+
+static int is_numeric_str(const char *s)
+{
+    if (!s || !*s) return 0;
+    for (; *s; s++) {
+        if (!isdigit((unsigned char)*s))
+            return 0;
+    }
+    return 1;
+}
+
+static unsigned long long read_meminfo_bytes(const char *key)
+{
+    FILE *f = fopen("/proc/meminfo", "r");
+    if (!f) return 0;
+
+    char line[256];
+    unsigned long long value = 0;
+    while (fgets(line, sizeof(line), f)) {
+        char name[64] = {0};
+        if (sscanf(line, "%63[^:]: %llu kB", name, &value) == 2 && strcmp(name, key) == 0) {
+            fclose(f);
+            return value * 1024ULL;
+        }
+    }
+
+    fclose(f);
+    return 0;
+}
+
+static double read_proc_uptime(void)
+{
+    FILE *f = fopen("/proc/uptime", "r");
+    if (!f) return 0.0;
+
+    char buf[64] = {0};
+    if (!fgets(buf, sizeof(buf), f)) {
+        fclose(f);
+        return 0.0;
+    }
+    fclose(f);
+    return strtod(buf, NULL);
+}
+
+static double read_cpu_usage(unsigned long long *delta_total)
+{
+    FILE *f = fopen("/proc/stat", "r");
+    if (!f) {
+        if (delta_total) *delta_total = 0;
+        return 0.0;
+    }
+
+    char line[256] = {0};
+    if (!fgets(line, sizeof(line), f)) {
+        fclose(f);
+        if (delta_total) *delta_total = 0;
+        return 0.0;
+    }
+    fclose(f);
+
+    unsigned long long user = 0, nice = 0, system_ticks = 0, idle = 0, iowait = 0;
+    unsigned long long irq = 0, softirq = 0, steal = 0, guest = 0, guest_nice = 0;
+    int n = sscanf(line, "cpu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu",
+                   &user, &nice, &system_ticks, &idle, &iowait,
+                   &irq, &softirq, &steal, &guest, &guest_nice);
+    if (n < 4) {
+        if (delta_total) *delta_total = 0;
+        return 0.0;
+    }
+    (void)guest;
+    (void)guest_nice;
+
+    unsigned long long total = user + nice + system_ticks + idle + iowait + irq + softirq + steal;
+    unsigned long long idle_all = idle + iowait;
+    unsigned long long prev_total = g_sysmon_prev_total;
+    unsigned long long prev_idle = g_sysmon_prev_idle;
+    int had_prev = g_sysmon_have_prev_cpu;
+
+    g_sysmon_prev_total = total;
+    g_sysmon_prev_idle = idle_all;
+    g_sysmon_have_prev_cpu = 1;
+
+    if (!had_prev || total < prev_total || idle_all < prev_idle) {
+        if (delta_total) *delta_total = 0;
+        return 0.0;
+    }
+
+    unsigned long long dt = total - prev_total;
+    unsigned long long di = idle_all - prev_idle;
+    if (delta_total) *delta_total = dt;
+    if (dt == 0 || dt < di) return 0.0;
+    return ((double)(dt - di) * 100.0) / (double)dt;
+}
+
+static double read_cpu_temp(void)
+{
+    FILE *f = fopen("/sys/class/thermal/thermal_zone0/temp", "r");
+    if (!f) return 0.0;
+
+    char buf[64] = {0};
+    if (!fgets(buf, sizeof(buf), f)) {
+        fclose(f);
+        return 0.0;
+    }
+    fclose(f);
+    return strtod(buf, NULL) / 1000.0;
+}
+
+static int read_proc_row(const char *pid_str, SysMonProcRow *row)
+{
+    char path[128];
+    char line[1024];
+    char comm[64] = {0};
+    char comm_file[128];
+
+    snprintf(path, sizeof(path), "/proc/%s/stat", pid_str);
+    FILE *f = fopen(path, "r");
+    if (!f) return 0;
+    if (!fgets(line, sizeof(line), f)) {
+        fclose(f);
+        return 0;
+    }
+    fclose(f);
+
+    char *lp = strchr(line, '(');
+    char *rp = strrchr(line, ')');
+    if (!lp || !rp || rp <= lp) return 0;
+
+    int pid = atoi(line);
+    size_t clen = (size_t)(rp - lp - 1);
+    if (clen >= sizeof(comm)) clen = sizeof(comm) - 1;
+    memcpy(comm, lp + 1, clen);
+    comm[clen] = '\0';
+
+    const char *p = rp + 1;
+    while (*p == ' ') p++;
+    if (!*p) return 0;
+
+    char state = *p++;
+    while (*p == ' ') p++;
+
+    unsigned long long skip[10], utime = 0, stime = 0;
+    int n = sscanf(p,
+                   "%llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu",
+                   &skip[0], &skip[1], &skip[2], &skip[3], &skip[4],
+                   &skip[5], &skip[6], &skip[7], &skip[8], &skip[9],
+                   &utime, &stime);
+    if (n < 12) return 0;
+
+    snprintf(comm_file, sizeof(comm_file), "/proc/%s/comm", pid_str);
+    f = fopen(comm_file, "r");
+    if (f) {
+        if (fgets(comm, sizeof(comm), f)) {
+            size_t len = strlen(comm);
+            while (len > 0 && (comm[len - 1] == '\n' || comm[len - 1] == '\r'))
+                comm[--len] = '\0';
+        }
+        fclose(f);
+    }
+
+    row->pid = pid;
+    snprintf(row->name, sizeof(row->name), "%s", comm);
+    row->state = state;
+    row->ticks = utime + stime;
+    row->cpu_pct = 0.0;
+    return 1;
+}
+
+static unsigned long long prev_proc_ticks(int pid)
+{
+    for (int i = 0; i < g_sysmon_prev_count; i++) {
+        if (g_sysmon_prev[i].pid == pid)
+            return g_sysmon_prev[i].ticks;
+    }
+    return 0;
+}
+
+static void store_prev_procs(const SysMonProcRow *rows, int count)
+{
+    g_sysmon_prev_count = count < SYSMON_MAX_PROCS ? count : SYSMON_MAX_PROCS;
+    for (int i = 0; i < g_sysmon_prev_count; i++) {
+        g_sysmon_prev[i].pid = rows[i].pid;
+        g_sysmon_prev[i].ticks = rows[i].ticks;
+    }
+}
+
+static int sysmon_proc_cmp(const void *a, const void *b)
+{
+    const SysMonProcRow *pa = (const SysMonProcRow *)a;
+    const SysMonProcRow *pb = (const SysMonProcRow *)b;
+    if (pa->cpu_pct < pb->cpu_pct) return 1;
+    if (pa->cpu_pct > pb->cpu_pct) return -1;
+    if (pa->ticks < pb->ticks) return 1;
+    if (pa->ticks > pb->ticks) return -1;
+    return pa->pid - pb->pid;
 }
 
 /* ── Routes ──────────────────────────────────────────────────────────────── */
@@ -144,6 +366,114 @@ static void route_rescan(int fd)
          "Connection: close\r\n"
          "\r\n"
          "ok\n");
+}
+
+static void route_api_sys_stats(int fd)
+{
+    unsigned long long cpu_delta = 0;
+    double cpu_pct = read_cpu_usage(&cpu_delta);
+    unsigned long long mem_total = read_meminfo_bytes("MemTotal");
+    unsigned long long mem_avail = read_meminfo_bytes("MemAvailable");
+    if (!mem_avail) {
+        unsigned long long mem_free = read_meminfo_bytes("MemFree");
+        unsigned long long buffers = read_meminfo_bytes("Buffers");
+        unsigned long long cached = read_meminfo_bytes("Cached");
+        unsigned long long sreclaimable = read_meminfo_bytes("SReclaimable");
+        unsigned long long shmem = read_meminfo_bytes("Shmem");
+        unsigned long long fallback = mem_free + buffers + cached + sreclaimable;
+        if (fallback > shmem) fallback -= shmem;
+        else fallback = 0;
+        mem_avail = fallback;
+    }
+
+    unsigned long long mem_used = (mem_total > mem_avail) ? (mem_total - mem_avail) : 0;
+    double mem_pct = mem_total ? ((double)mem_used * 100.0) / (double)mem_total : 0.0;
+
+    struct statvfs vfs;
+    unsigned long long disk_total = 0, disk_free = 0, disk_used = 0;
+    double disk_pct = 0.0;
+    if (statvfs("/", &vfs) == 0) {
+        unsigned long long fr = vfs.f_frsize ? vfs.f_frsize : vfs.f_bsize;
+        disk_total = (unsigned long long)vfs.f_blocks * fr;
+        disk_free  = (unsigned long long)vfs.f_bavail * fr;
+        disk_used  = (disk_total > disk_free) ? (disk_total - disk_free) : 0;
+        disk_pct   = disk_total ? ((double)disk_used * 100.0) / (double)disk_total : 0.0;
+    }
+
+    double uptime_sec = read_proc_uptime();
+    double temp_c = read_cpu_temp();
+    int cpu_cores = (int)sysconf(_SC_NPROCESSORS_ONLN);
+    if (cpu_cores < 1) cpu_cores = 1;
+
+    SysMonProcRow rows[SYSMON_MAX_PROCS];
+    int count = 0;
+    DIR *dir = opendir("/proc");
+    if (dir) {
+        struct dirent *de;
+        while ((de = readdir(dir)) != NULL && count < SYSMON_MAX_PROCS) {
+           if (!is_numeric_str(de->d_name)) continue;
+           if (!read_proc_row(de->d_name, &rows[count])) continue;
+
+           unsigned long long prev_ticks = prev_proc_ticks(rows[count].pid);
+           if (cpu_delta > 0 && rows[count].ticks >= prev_ticks) {
+               unsigned long long delta = rows[count].ticks - prev_ticks;
+               rows[count].cpu_pct = ((double)delta * 100.0 * (double)cpu_cores) / (double)cpu_delta;
+           } else {
+               rows[count].cpu_pct = 0.0;
+           }
+           count++;
+        }
+        closedir(dir);
+    }
+
+    qsort(rows, (size_t)count, sizeof(rows[0]), sysmon_proc_cmp);
+    store_prev_procs(rows, count);
+
+    char ts[64];
+    time_t now = time(NULL);
+    struct tm *tm = localtime(&now);
+    strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", tm);
+
+    wstr(fd,
+         "HTTP/1.0 200 OK\r\n"
+         "Content-Type: application/json\r\n"
+         "Cache-Control: no-store, no-cache, must-revalidate\r\n"
+         "Pragma: no-cache\r\n"
+         "Connection: close\r\n"
+         "\r\n");
+
+    wstr(fd, "{");
+    wstr(fd, "\"ok\":true,");
+    wstr(fd, "\"timestamp\":"); json_str(fd, ts);
+    wfmt(fd, ",\"uptime_sec\":%.0f", uptime_sec);
+    wfmt(fd, ",\"cpu_pct\":%.1f", cpu_pct);
+    wfmt(fd, ",\"cpu_cores\":%d", cpu_cores);
+    wfmt(fd, ",\"temp_c\":%.1f", temp_c);
+
+    wstr(fd, ",\"mem\":{");
+    wfmt(fd, "\"total\":%llu,\"used\":%llu,\"available\":%llu,\"percent\":%.1f",
+         mem_total, mem_used, mem_avail, mem_pct);
+    wstr(fd, "},");
+
+    wstr(fd, "\"disk\":{");
+    wfmt(fd, "\"total\":%llu,\"used\":%llu,\"free\":%llu,\"percent\":%.1f",
+         disk_total, disk_used, disk_free, disk_pct);
+    wstr(fd, "},");
+
+    wfmt(fd, "\"process_count\":%d,\"processes\":[", count);
+    int top = count < 10 ? count : 10;
+    for (int i = 0; i < top; i++) {
+        if (i) wstr(fd, ",");
+        wstr(fd, "{");
+        wfmt(fd, "\"pid\":%d,", rows[i].pid);
+        wstr(fd, "\"name\":"); json_str(fd, rows[i].name);
+        wfmt(fd, ",\"cpu_pct\":%.1f", rows[i].cpu_pct);
+        wstr(fd, ",\"state\":");
+        char state_buf[2] = { rows[i].state, '\0' };
+        json_str(fd, state_buf);
+        wstr(fd, "}");
+    }
+    wstr(fd, "]}\n");
 }
 
 static void route_404(int fd)
@@ -350,27 +680,32 @@ static void route_api_browse(int fd, const char *query)
     get_field(query, "path", path, sizeof(path));
     if (!path[0]) snprintf(path, sizeof(path), "/root");
 
-    if (!valid_ip(ip) || !valid_path(path)) {
+    int is_local = (strcmp(ip, "LOCAL") == 0);
+    if ((!is_local && !valid_ip(ip)) || !valid_path(path)) {
         wstr(fd, "HTTP/1.0 400 Bad Request\r\nContent-Type: application/json\r\n"
                  "Connection: close\r\n\r\n{\"error\":\"invalid ip or path\"}\n");
         return;
     }
 
-    if (!cmd_exists("sshpass")) {
-        wstr(fd, "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n"
-                 "Connection: close\r\n\r\n"
-                 "{\"error\":\"sshpass not found — run: sudo apt install sshpass\"}\n");
-        return;
-    }
-
     char cmd[1024];
-    snprintf(cmd, sizeof(cmd),
-        "sshpass -p luckfox ssh "
-        "-o StrictHostKeyChecking=no "
-        "-o ConnectTimeout=5 "
-        "root@%s "
-        "\"ls -la \\\"%s\\\"\" 2>&1",
-        ip, path);
+    if (is_local) {
+        snprintf(cmd, sizeof(cmd),
+            "ls -la --time-style='+%%Y-%%m-%%d %%H:%%M:%%S' \"%s\" 2>&1", path);
+    } else {
+        if (!cmd_exists("sshpass")) {
+            wstr(fd, "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n"
+                     "Connection: close\r\n\r\n"
+                     "{\"error\":\"sshpass not found — run: sudo apt install sshpass\"}\n");
+            return;
+        }
+        snprintf(cmd, sizeof(cmd),
+            "sshpass -p luckfox ssh "
+            "-o StrictHostKeyChecking=no "
+            "-o ConnectTimeout=5 "
+            "root@%s "
+            "\"ls -la \\\"%s\\\"\" 2>&1",
+            ip, path);
+    }
 
     FILE *fp = popen(cmd, "r");
     if (!fp) {
@@ -393,7 +728,7 @@ static void route_api_browse(int fd, const char *query)
         return;
     }
 
-    /* Parse ls -la: skip 8 tokens to reach filename */
+    /* Parse ls -la --time-style: perms nlinks owner group size date time name (8 tokens) */
     wstr(fd, "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n"
              "Connection: close\r\n\r\n");
     wstr(fd, "{\"path\":");
@@ -408,8 +743,8 @@ static void route_api_browse(int fd, const char *query)
 
         char ftype = *line;
         if (ftype == '-' || ftype == 'd' || ftype == 'l') {
-            /* Tokenize ls -la: perms nlinks owner group size mon day time name... */
-            /* indices:         0     1      2     3     4    5   6   7    8+    */
+            /* Tokenize up to 9 tokens; name is at index 7 (GNU --time-style)
+               or index 8 (BusyBox/standard ls: Mon DD HH:MM or Mon DD YYYY) */
             const char *tstart[9]; int tlen9[9]; int ntok = 0;
             const char *p = line;
             while (ntok < 9 && p < line + llen) {
@@ -424,7 +759,7 @@ static void route_api_browse(int fd, const char *query)
                 }
                 ntok++;
             }
-            if (ntok < 9) { line = nl ? nl + 1 : line + llen; if (!nl) break; continue; }
+            if (ntok < 8) { line = nl ? nl + 1 : line + llen; if (!nl) break; continue; }
 
             char perms[12] = {0};
             memcpy(perms, tstart[0], tlen9[0] < 11 ? tlen9[0] : 10);
@@ -434,19 +769,31 @@ static void route_api_browse(int fd, const char *query)
 
             long fsz = atol(tstart[4]);
 
-            char date[20] = {0};
-            {
+            /* Detect format by token[5]: GNU gives "YYYY-MM-DD", BusyBox gives "Jan"/"Feb"/etc */
+            char date[24] = {0};
+            int name_idx;
+            if (tlen9[5] >= 10 && tstart[5][4] == '-' && tstart[5][7] == '-') {
+                /* GNU --time-style: "YYYY-MM-DD HH:MM:SS", name at index 7 */
+                char dt[12]={0}, tm[10]={0};
+                memcpy(dt, tstart[5], tlen9[5] < 11 ? tlen9[5] : 10);
+                memcpy(tm, tstart[6], tlen9[6] < 9  ? tlen9[6] : 8);
+                snprintf(date, sizeof(date), "%s %s", dt, tm);
+                name_idx = 7;
+            } else {
+                /* BusyBox: "Mon DD HH:MM" or "Mon DD  YYYY", name at index 8 */
+                if (ntok < 9) { line = nl ? nl + 1 : line + llen; if (!nl) break; continue; }
                 char mo[4]={0}, dy[3]={0}, tm[6]={0};
                 memcpy(mo, tstart[5], tlen9[5] < 3 ? tlen9[5] : 3);
                 memcpy(dy, tstart[6], tlen9[6] < 2 ? tlen9[6] : 2);
                 memcpy(tm, tstart[7], tlen9[7] < 5 ? tlen9[7] : 5);
                 snprintf(date, sizeof(date), "%s %s %s", mo, dy, tm);
+                name_idx = 8;
             }
 
-            size_t namelen = (size_t)tlen9[8];
+            size_t namelen = (size_t)tlen9[name_idx];
             char name[256] = {0};
             if (namelen >= sizeof(name)) namelen = sizeof(name) - 1;
-            memcpy(name, tstart[8], namelen);
+            memcpy(name, tstart[name_idx], namelen);
             while (namelen > 0 && (name[namelen-1] == '\r' || name[namelen-1] == '\n'
                                    || name[namelen-1] == ' '))
                 name[--namelen] = '\0';
@@ -486,6 +833,7 @@ typedef struct {
     char source_ip[64];
     char source_paths[MAX_SCP_FILES][JSON_ITEM_LEN];
     int  num_paths;
+    int  src_is_local;
     char target_ip[64];
     char target_dir[256];
     int  exit_code;
@@ -507,28 +855,74 @@ static void *scp_worker(void *arg)
     snprintf(cmd, sizeof(cmd), "rm -rf '%s' && mkdir -p '%s'", tmpdir, tmpdir);
     system(cmd);
 
-    /* ── Step 1: Download from source device → Pi /tmp ─────────────────── */
-    int pos = snprintf(cmd, sizeof(cmd),
-        "sshpass -p luckfox scp "
-        "-o StrictHostKeyChecking=no "
-        "-o ConnectTimeout=30 -r ");
-    for (int i = 0; i < job->num_paths && pos < (int)sizeof(cmd) - 256; i++)
-        pos += snprintf(cmd + pos, sizeof(cmd) - pos,
-            "'root@%s:%s' ", job->source_ip, job->source_paths[i]);
-    pos += snprintf(cmd + pos, sizeof(cmd) - pos, "'%s/' 2>&1", tmpdir);
+    /* ── Step 1: Download from source → Pi /tmp ─────────────────────────── */
+    if (job->src_is_local) {
+        int pos = snprintf(cmd, sizeof(cmd), "cp -r ");
+        for (int i = 0; i < job->num_paths && pos < (int)sizeof(cmd) - 256; i++)
+            pos += snprintf(cmd + pos, sizeof(cmd) - pos,
+                "'%s' ", job->source_paths[i]);
+        pos += snprintf(cmd + pos, sizeof(cmd) - pos, "'%s/' 2>&1", tmpdir);
 
-    fp = popen(cmd, "r");
-    if (!fp) {
-        snprintf(job->output, sizeof(job->output), "download: popen failed");
-        job->exit_code = -1;
-        goto cleanup;
+        fp = popen(cmd, "r");
+        if (!fp) {
+            snprintf(job->output, sizeof(job->output), "download: popen failed");
+            job->exit_code = -1;
+            goto cleanup;
+        }
+        n = fread(job->output, 1, sizeof(job->output) / 2 - 1, fp);
+        job->output[n] = '\0';
+        job->exit_code = WEXITSTATUS(pclose(fp));
+    } else {
+        /* ssh+tar — more reliable than scp on Dropbear/embedded source devices.
+           Use dirname of first path as remote base dir, tar basenames only. */
+        char dlscript[128];
+        snprintf(dlscript, sizeof(dlscript), "/tmp/ipscp_dl_%d.sh", job->job_id);
+
+        FILE *dlf = fopen(dlscript, "w");
+        if (!dlf) {
+            snprintf(job->output, sizeof(job->output), "download: cannot create script");
+            job->exit_code = -1;
+            goto cleanup;
+        }
+
+        /* Derive remote base dir from first source path */
+        char basedir[512];
+        strncpy(basedir, job->source_paths[0], sizeof(basedir) - 1);
+        basedir[sizeof(basedir) - 1] = '\0';
+        char *slash = strrchr(basedir, '/');
+        if (slash && slash > basedir) *slash = '\0';
+        else strncpy(basedir, "/", sizeof(basedir) - 1);
+
+        fprintf(dlf, "#!/bin/sh\n"
+                     "sshpass -p luckfox ssh \\\n"
+                     "  -o StrictHostKeyChecking=no \\\n"
+                     "  -o ConnectTimeout=30 \\\n"
+                     "  root@%s \\\n"
+                     "  \"tar -C '%s' -cf -",
+                job->source_ip, basedir);
+        for (int i = 0; i < job->num_paths; i++) {
+            const char *bn = strrchr(job->source_paths[i], '/');
+            bn = bn ? bn + 1 : job->source_paths[i];
+            fprintf(dlf, " '%s'", bn);
+        }
+        fprintf(dlf, "\" | tar -C '%s/' -xf - 2>&1\n", tmpdir);
+        fclose(dlf);
+
+        snprintf(cmd, sizeof(cmd), "chmod +x '%s' && '%s'", dlscript, dlscript);
+        fp = popen(cmd, "r");
+        if (!fp) {
+            snprintf(job->output, sizeof(job->output), "download: popen failed");
+            job->exit_code = -1;
+            unlink(dlscript);
+            goto cleanup;
+        }
+        n = fread(job->output, 1, sizeof(job->output) / 2 - 1, fp);
+        job->output[n] = '\0';
+        job->exit_code = WEXITSTATUS(pclose(fp));
+        unlink(dlscript);
     }
-    n = fread(job->output, 1, sizeof(job->output) / 2 - 1, fp);
-    job->output[n] = '\0';
-    job->exit_code = WEXITSTATUS(pclose(fp));
 
     if (job->exit_code != 0) {
-        /* Prepend label so user knows it was the download step */
         char tmp2[sizeof(job->output)];
         snprintf(tmp2, sizeof(tmp2), "[download from %s failed]\n%s",
                  job->source_ip, job->output);
@@ -559,8 +953,10 @@ static void *scp_worker(void *arg)
         }
     }
 
-    /* ── Step 3: Upload from Pi /tmp → target device ───────────────────── */
-    /* Write a temp shell script so the glob expands correctly */
+    /* ── Step 3: Upload from Pi /tmp → target device (tar-over-SSH) ──────── */
+    /* tar pipe is more reliable than scp on Dropbear/embedded targets:
+       avoids scp "dest open" failures when target has overlay FS or
+       an existing directory with the same name as the file being sent. */
     {
         char script[128];
         snprintf(script, sizeof(script), "/tmp/ipscp_ul_%s.sh", job->target_ip);
@@ -571,13 +967,16 @@ static void *scp_worker(void *arg)
             job->exit_code = -1;
             goto cleanup;
         }
+        /* tar everything in staging dir, pipe through SSH, extract on target */
         fprintf(fp,
             "#!/bin/sh\n"
-            "sshpass -p luckfox scp "
-            "-o StrictHostKeyChecking=no "
-            "-o ConnectTimeout=30 -r "
-            "%s/* 'root@%s:%s' 2>&1\n",
-            tmpdir, job->target_ip, job->target_dir);
+            "tar -C '%s' -cf - . | \\\n"
+            "sshpass -p luckfox ssh \\\n"
+            "  -o StrictHostKeyChecking=no \\\n"
+            "  -o ConnectTimeout=30 \\\n"
+            "  root@%s \\\n"
+            "  \"mkdir -p '%s' && tar -C '%s' -xf - 2>&1\"\n",
+            tmpdir, job->target_ip, job->target_dir, job->target_dir);
         fclose(fp);
 
         snprintf(cmd, sizeof(cmd), "chmod +x '%s'", script);
@@ -607,11 +1006,13 @@ static void *scp_worker(void *arg)
             if (fp) {
                 fprintf(fp,
                     "#!/bin/sh\n"
-                    "sshpass -p luckfox scp "
-                    "-o StrictHostKeyChecking=no "
-                    "-o ConnectTimeout=30 -r "
-                    "%s/* 'root@%s:%s' 2>&1\n",
-                    tmpdir, job->target_ip, job->target_dir);
+                    "tar -C '%s' -cf - . | \\\n"
+                    "sshpass -p luckfox ssh \\\n"
+                    "  -o StrictHostKeyChecking=no \\\n"
+                    "  -o ConnectTimeout=30 \\\n"
+                    "  root@%s \\\n"
+                    "  \"mkdir -p '%s' && tar -C '%s' -xf - 2>&1\"\n",
+                    tmpdir, job->target_ip, job->target_dir, job->target_dir);
                 fclose(fp);
                 snprintf(cmd, sizeof(cmd), "chmod +x '%s'", script);
                 system(cmd);
@@ -669,7 +1070,8 @@ static void route_api_multi_scp(int fd, const char *req)
         num_targets = json_str_arr(body, "target_ips",  target_ips,  MAX_SCP_TARGETS);
     }
 
-    if (!valid_ip(source_ip) || num_paths == 0 || num_targets == 0) {
+    int src_is_local = (strcmp(source_ip, "LOCAL") == 0);
+    if ((!src_is_local && !valid_ip(source_ip)) || num_paths == 0 || num_targets == 0) {
         wstr(fd, "HTTP/1.0 400 Bad Request\r\nContent-Type: application/json\r\n"
                  "Connection: close\r\n\r\n{\"error\":\"missing or invalid fields\"}\n");
         return;
@@ -748,7 +1150,8 @@ static void route_api_multi_scp(int fd, const char *req)
 
     for (int i = 0; i < num_targets; i++) {
         memset(&jobs[i], 0, sizeof(jobs[i]));
-        jobs[i].job_id    = i;
+        jobs[i].job_id      = i;
+        jobs[i].src_is_local = src_is_local;
         snprintf(jobs[i].source_ip,  sizeof(jobs[i].source_ip),  "%s", source_ip);
         jobs[i].num_paths = num_paths;
         for (int j = 0; j < num_paths; j++)
@@ -814,9 +1217,9 @@ static void route_api_mkdir(int fd, const char *req)
     if (!body) { wstr(fd, "HTTP/1.0 400 Bad Request\r\nContent-Type: application/json\r\n"
                           "Connection: close\r\n\r\n{\"error\":\"no body\"}\n"); return; }
     body += 4;
-    char ip[64], path[512];
-    get_field(body, "ip",   ip,   sizeof(ip));
-    get_field(body, "path", path, sizeof(path));
+    char ip[64] = {0}, path[512] = {0};
+    json_str_val(body, "ip",   ip,   sizeof(ip));
+    json_str_val(body, "path", path, sizeof(path));
     if (!valid_ip(ip) || !valid_path(path)) {
         wstr(fd, "HTTP/1.0 400 Bad Request\r\nContent-Type: application/json\r\n"
                  "Connection: close\r\n\r\n{\"error\":\"invalid ip or path\"}\n"); return;
@@ -833,9 +1236,9 @@ static void route_api_rm(int fd, const char *req)
     if (!body) { wstr(fd, "HTTP/1.0 400 Bad Request\r\nContent-Type: application/json\r\n"
                           "Connection: close\r\n\r\n{\"error\":\"no body\"}\n"); return; }
     body += 4;
-    char ip[64], path[512];
-    get_field(body, "ip",   ip,   sizeof(ip));
-    get_field(body, "path", path, sizeof(path));
+    char ip[64] = {0}, path[512] = {0};
+    json_str_val(body, "ip",   ip,   sizeof(ip));
+    json_str_val(body, "path", path, sizeof(path));
     if (!valid_ip(ip) || !valid_path(path) || strlen(path) < 4) {
         wstr(fd, "HTTP/1.0 400 Bad Request\r\nContent-Type: application/json\r\n"
                  "Connection: close\r\n\r\n{\"error\":\"invalid ip or path\"}\n"); return;
@@ -852,10 +1255,10 @@ static void route_api_rename(int fd, const char *req)
     if (!body) { wstr(fd, "HTTP/1.0 400 Bad Request\r\nContent-Type: application/json\r\n"
                           "Connection: close\r\n\r\n{\"error\":\"no body\"}\n"); return; }
     body += 4;
-    char ip[64], from[512], to[512];
-    get_field(body, "ip",   ip,   sizeof(ip));
-    get_field(body, "from", from, sizeof(from));
-    get_field(body, "to",   to,   sizeof(to));
+    char ip[64] = {0}, from[512] = {0}, to[512] = {0};
+    json_str_val(body, "ip",      ip,   sizeof(ip));
+    json_str_val(body, "path",    from, sizeof(from));
+    json_str_val(body, "newpath", to,   sizeof(to));
     if (!valid_ip(ip) || !valid_path(from) || !valid_path(to)) {
         wstr(fd, "HTTP/1.0 400 Bad Request\r\nContent-Type: application/json\r\n"
                  "Connection: close\r\n\r\n{\"error\":\"invalid ip or path\"}\n"); return;
@@ -863,6 +1266,209 @@ static void route_api_rename(int fd, const char *req)
     char sc[1100];
     snprintf(sc, sizeof(sc), "mv \"%s\" \"%s\"", from, to);
     ssh_exec(fd, ip, sc);
+}
+
+/* POST /api/chmod  body: {"ip":"...","paths":[...],"mode":"0755","recursive":false} */
+static void route_api_chmod(int fd, const char *req)
+{
+    const char *body = strstr(req, "\r\n\r\n");
+    if (!body) { wstr(fd, "HTTP/1.0 400 Bad Request\r\nContent-Type: application/json\r\n"
+                          "Connection: close\r\n\r\n{\"error\":\"no body\"}\n"); return; }
+    body += 4;
+
+    char ip[64] = {0}, mode[8] = {0};
+    int  recursive = 0;
+    json_str_val(body, "ip",   ip,   sizeof(ip));
+    json_str_val(body, "mode", mode, sizeof(mode));
+
+    /* validate mode: must be 1–4 octal digits */
+    int mlen = (int)strlen(mode);
+    if (mlen < 1 || mlen > 4) {
+        wstr(fd, "HTTP/1.0 400 Bad Request\r\nContent-Type: application/json\r\n"
+                 "Connection: close\r\n\r\n{\"error\":\"invalid mode\"}\n"); return;
+    }
+    for (int i = 0; i < mlen; i++) {
+        if (mode[i] < '0' || mode[i] > '7') {
+            wstr(fd, "HTTP/1.0 400 Bad Request\r\nContent-Type: application/json\r\n"
+                     "Connection: close\r\n\r\n{\"error\":\"invalid mode\"}\n"); return;
+        }
+    }
+
+    int is_local = (strcmp(ip, "LOCAL") == 0);
+    if (!is_local && !valid_ip(ip)) {
+        wstr(fd, "HTTP/1.0 400 Bad Request\r\nContent-Type: application/json\r\n"
+                 "Connection: close\r\n\r\n{\"error\":\"invalid ip\"}\n"); return;
+    }
+
+    /* check recursive flag */
+    if (strstr(body, "\"recursive\":true")) recursive = 1;
+
+    /* parse paths array: find "paths":[...] then extract each "..." */
+    const char *arr = strstr(body, "\"paths\"");
+    if (!arr) {
+        wstr(fd, "HTTP/1.0 400 Bad Request\r\nContent-Type: application/json\r\n"
+                 "Connection: close\r\n\r\n{\"error\":\"no paths\"}\n"); return;
+    }
+    arr = strchr(arr, '[');
+    if (!arr) {
+        wstr(fd, "HTTP/1.0 400 Bad Request\r\nContent-Type: application/json\r\n"
+                 "Connection: close\r\n\r\n{\"error\":\"no paths\"}\n"); return;
+    }
+
+    /* build chmod command: chmod [-R] mode 'path1' 'path2' ... */
+    char sc[4096];
+    int  sc_len = snprintf(sc, sizeof(sc), "chmod %s %s", recursive ? "-R" : "", mode);
+
+    const char *p = arr + 1;
+    int n = 0;
+    while (n < 64 && sc_len < (int)sizeof(sc) - 10) {
+        while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r' || *p == ',') p++;
+        if (*p == ']' || *p == '\0') break;
+        if (*p != '"') break;
+        p++;
+        char path[512] = {0};
+        int pi = 0;
+        while (*p && *p != '"' && pi < (int)sizeof(path) - 1) {
+            if (*p == '\\' && *(p+1)) { p++; } /* skip escape */
+            path[pi++] = *p++;
+        }
+        if (*p == '"') p++;
+        if (!valid_path(path) || strlen(path) < 2) continue;
+        /* single-quote each path (no single-quotes allowed in valid_path) */
+        sc_len += snprintf(sc + sc_len, sizeof(sc) - sc_len, " '%s'", path);
+        n++;
+    }
+
+    if (n == 0) {
+        wstr(fd, "HTTP/1.0 400 Bad Request\r\nContent-Type: application/json\r\n"
+                 "Connection: close\r\n\r\n{\"error\":\"no valid paths\"}\n"); return;
+    }
+
+    if (is_local) {
+        FILE *fp = popen(sc, "r");
+        char out[256] = {0};
+        int rc = 0;
+        if (fp) { fread(out, 1, sizeof(out)-1, fp); rc = WEXITSTATUS(pclose(fp)); }
+        if (rc != 0) {
+            wstr(fd, "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"error\":");
+            json_str(fd, out[0] ? out : "chmod failed");
+            wstr(fd, "}\n");
+        } else {
+            wstr(fd, "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"ok\":true}\n");
+        }
+    } else {
+        ssh_exec(fd, ip, sc);
+    }
+}
+
+/* ── SSH Terminal ────────────────────────────────────────────────────────── */
+
+/* POST /api/ssh-exec
+   Body: {"ip":"192.168.2.167","command":"df -h"}
+   Returns: {"stdout":"...","stderr":"...","exit_code":0,"elapsed_ms":123}
+   ip="LOCAL" runs the command directly on the Pi via popen().
+*/
+static void route_api_ssh_exec(int fd, const char *req)
+{
+    const char *body = strstr(req, "\r\n\r\n");
+    if (!body) {
+        wstr(fd, "HTTP/1.0 400 Bad Request\r\nContent-Type: application/json\r\n"
+                 "Connection: close\r\n\r\n{\"error\":\"no body\"}\n");
+        return;
+    }
+    body += 4;
+
+    char ip[64]      = {0};
+    char command[512] = {0};
+    json_str_val(body, "ip",      ip,      sizeof(ip));
+    json_str_val(body, "command", command, sizeof(command));
+
+    int is_local = (strcmp(ip, "LOCAL") == 0);
+    if (!is_local && !valid_ip(ip)) {
+        wstr(fd, "HTTP/1.0 400 Bad Request\r\nContent-Type: application/json\r\n"
+                 "Connection: close\r\n\r\n{\"error\":\"invalid ip\"}\n");
+        return;
+    }
+    if (!command[0]) {
+        wstr(fd, "HTTP/1.0 400 Bad Request\r\nContent-Type: application/json\r\n"
+                 "Connection: close\r\n\r\n{\"error\":\"empty command\"}\n");
+        return;
+    }
+
+    /* Strip single-quotes: command is wrapped in single-quotes for ssh */
+    {
+        char *src = command, *dst = command;
+        while (*src) { if (*src != '\'') *dst++ = *src; src++; }
+        *dst = '\0';
+    }
+
+    /* Reject obviously dangerous shell metacharacters */
+    const char *deny = ";&|`$(){}><";
+    for (const char *c = command; *c; c++) {
+        if (strchr(deny, *c)) {
+            wstr(fd, "HTTP/1.0 400 Bad Request\r\nContent-Type: application/json\r\n"
+                     "Connection: close\r\n\r\n{\"error\":\"unsafe character in command\"}\n");
+            return;
+        }
+    }
+
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+
+    char full_cmd[1024];
+    if (is_local) {
+        /* Wrap in sh -c so the command string runs as-is */
+        snprintf(full_cmd, sizeof(full_cmd),
+                 "sh -c '%s' 2>/tmp/ssh_stderr_local", command);
+    } else {
+        if (!cmd_exists("sshpass")) {
+            wstr(fd, "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n"
+                     "Connection: close\r\n\r\n"
+                     "{\"stdout\":\"\",\"stderr\":\"sshpass not found\","
+                     "\"exit_code\":-1,\"elapsed_ms\":0}\n");
+            return;
+        }
+        snprintf(full_cmd, sizeof(full_cmd),
+                 "sshpass -p luckfox ssh "
+                 "-o StrictHostKeyChecking=no -o ConnectTimeout=10 "
+                 "root@%s '%s' 2>/tmp/ssh_stderr_%s",
+                 ip, command, ip);
+    }
+
+    /* Run and capture stdout */
+    char stdout_buf[4096] = {0};
+    char stderr_buf[1024] = {0};
+    FILE *fp = popen(full_cmd, "r");
+    int exit_code = -1;
+    if (fp) {
+        size_t n = fread(stdout_buf, 1, sizeof(stdout_buf) - 1, fp);
+        stdout_buf[n] = '\0';
+        exit_code = WEXITSTATUS(pclose(fp));
+    }
+
+    /* Read stderr temp file */
+    char stderr_path[64];
+    snprintf(stderr_path, sizeof(stderr_path),
+             is_local ? "/tmp/ssh_stderr_local" : "/tmp/ssh_stderr_%s", ip);
+    FILE *ef = fopen(stderr_path, "r");
+    if (ef) {
+        size_t n = fread(stderr_buf, 1, sizeof(stderr_buf) - 1, ef);
+        stderr_buf[n] = '\0';
+        fclose(ef);
+        unlink(stderr_path);
+    }
+
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    long elapsed = (long)((t1.tv_sec - t0.tv_sec) * 1000 +
+                          (t1.tv_nsec - t0.tv_nsec) / 1000000);
+
+    wstr(fd, "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n"
+             "Connection: close\r\n\r\n");
+    wstr(fd, "{\"stdout\":");
+    json_str(fd, stdout_buf);
+    wstr(fd, ",\"stderr\":");
+    json_str(fd, stderr_buf);
+    wfmt(fd, ",\"exit_code\":%d,\"elapsed_ms\":%ld}\n", exit_code, elapsed);
 }
 
 /* ── /regen helpers ──────────────────────────────────────────────────────── */
@@ -1121,6 +1727,8 @@ void web_serve(const char *iface, const char *comments_file,
                 route_root(fd);
             else if (strcmp(path, "/api/scan") == 0)
                 route_api_scan(fd);
+            else if (strcmp(path, "/api/sys-stats") == 0)
+                route_api_sys_stats(fd);
             else if (strcmp(path, "/rescan") == 0)
                 route_rescan(fd);
             else if (strcmp(path, "/regen") == 0)
@@ -1141,6 +1749,10 @@ void web_serve(const char *iface, const char *comments_file,
                 route_api_rm(fd, req);
             else if (strcmp(path, "/api/rename") == 0)
                 route_api_rename(fd, req);
+            else if (strcmp(path, "/api/chmod") == 0)
+                route_api_chmod(fd, req);
+            else if (strcmp(path, "/api/ssh-exec") == 0)
+                route_api_ssh_exec(fd, req);
             else
                 route_404(fd);
         } else if (strcmp(method, "DELETE") == 0) {

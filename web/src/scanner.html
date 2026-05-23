@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IP Scanner</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<link rel="stylesheet" href="assets/css/base.css">
+<link rel="stylesheet" href="assets/css/sidebar.css">
+<link rel="stylesheet" href="assets/css/components.css">
+<link rel="stylesheet" href="assets/css/table.css">
+<link rel="stylesheet" href="assets/css/scp.css">
+<link rel="stylesheet" href="assets/css/sysmonitor.css">
+<link rel="stylesheet" href="assets/css/ssh-terminal.css">
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div class="header-left">
+    <div class="header-logo"><i class="fa-solid fa-network-wired"></i></div>
+    <span class="header-title">IP Scanner</span>
+    <span class="header-sub">ARP Network Discovery</span>
+  </div>
+  <div class="header-right">
+    <span class="badge-iface" id="badge-iface"><i class="fa-solid fa-ethernet"></i> &nbsp;—</span>
+    <button class="btn btn-primary" id="btn-rescan" onclick="rescan()">
+      <i class="fa-solid fa-rotate" id="rescan-icon"></i> Rescan
+    </button>
+  </div>
+</div>
+
+<!-- App shell: sidebar + scrollable main -->
+<div class="app-shell">
+
+<!-- Sidebar -->
+<nav class="sidebar" id="sidebar">
+  <div class="sidebar-header">
+    <div class="sidebar-brand">
+      <i class="fa-solid fa-network-wired"></i>
+      <span class="sidebar-brand-text">IP Scanner</span>
+    </div>
+    <button class="sidebar-toggle" onclick="toggleSidebar()" id="sidebar-toggle-btn" title="Toggle sidebar">
+      <i class="fa-solid fa-angles-left" id="sidebar-toggle-icon"></i>
+    </button>
+  </div>
+
+  <div class="sidebar-nav">
+    <div class="nav-item active" id="nav-hostlist" title="Host List"
+         onclick="navClick('hostlist')">
+      <i class="fa-solid fa-list"></i>
+      <span class="nav-text">Host List</span>
+      <i class="fa-solid fa-thumbtack pin-icon pinned" id="pin-hostlist"
+         onclick="pinClick(event,'hostlist')" title="Pin panel"></i>
+    </div>
+    <div class="nav-item" id="nav-scp" title="Multi SCP — File Transfer"
+         onclick="navClick('scp')">
+      <i class="fa-solid fa-upload"></i>
+      <span class="nav-text">Multi SCP — File Transfer</span>
+      <i class="fa-solid fa-thumbtack pin-icon pinned" id="pin-scp"
+         onclick="pinClick(event,'scp')" title="Pin panel"></i>
+    </div>
+    <div class="nav-item" id="nav-sys-monitor" title="System Monitor"
+         onclick="navClick('sys-monitor')">
+      <i class="fa-solid fa-gauge-high"></i>
+      <span class="nav-text">System Monitor</span>
+      <i class="fa-solid fa-thumbtack pin-icon" id="pin-sys-monitor"
+         onclick="pinClick(event,'sys-monitor')" title="Pin panel"></i>
+    </div>
+    <div class="nav-item" id="nav-ssh-terminal" title="SSH Terminal"
+         onclick="navClick('ssh-terminal')">
+      <i class="fa-solid fa-terminal"></i>
+      <span class="nav-text">SSH Terminal</span>
+      <i class="fa-solid fa-thumbtack pin-icon" id="pin-ssh-terminal"
+         onclick="pinClick(event,'ssh-terminal')" title="Pin panel"></i>
+    </div>
+  </div>
+
+  <div class="sidebar-nav-bottom">
+    <div class="nav-item disabled" title="Settings (coming soon)">
+      <i class="fa-solid fa-gear"></i>
+      <span class="nav-text">Settings</span>
+    </div>
+  </div>
+</nav>
+
+<!-- Main -->
+<div class="app-main">
+<div class="main">
+
+  <!-- Stats -->
+  <div class="stats">
+    <div class="stat-card">
+      <div class="stat-icon blue"><i class="fa-solid fa-server"></i></div>
+      <div>
+        <div class="stat-num" id="stat-total">—</div>
+        <div class="stat-label">Total Hosts</div>
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon green"><i class="fa-solid fa-circle-check"></i></div>
+      <div>
+        <div class="stat-num" id="stat-online">—</div>
+        <div class="stat-label">Online</div>
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon purple"><i class="fa-solid fa-microchip"></i></div>
+      <div>
+        <div class="stat-num" id="stat-luckfox">—</div>
+        <div class="stat-label">Luckfox Nodes</div>
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon orange"><i class="fa-solid fa-clock-rotate-left"></i></div>
+      <div>
+        <div class="stat-num" id="stat-time" style="font-size:14px;margin-top:4px">—</div>
+        <div class="stat-label">Last Scan</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SSH panel (shown on row select) -->
+  <div class="ssh-panel" id="ssh-panel">
+    <div class="ssh-panel-title">
+      <i class="fa-solid fa-terminal"></i> SSH Connect
+    </div>
+    <div class="ssh-host-info" id="ssh-host-info"></div>
+    <div class="ssh-cmd-row">
+      <div class="ssh-cmd-box" id="ssh-cmd-box"></div>
+      <button class="btn-copy" id="btn-copy" onclick="copyCmd()">
+        <i class="fa-regular fa-copy"></i> Copy
+      </button>
+    </div>
+  </div>
+
+  <!-- System Monitor Card -->
+  <div class="card sysmonitor-card" id="sysmonitor-card">
+    <div class="card-header">
+      <div class="card-header-left">
+        <div class="card-title">
+          <i class="fa-solid fa-gauge-high"></i> System Monitor
+        </div>
+        <div class="sysmonitor-subtitle">Local board health and live process load</div>
+      </div>
+      <div class="sysmonitor-badges">
+        <span class="sysmonitor-pill idle" id="sysmonitor-uptime">Uptime: --</span>
+        <span class="sysmonitor-pill idle" id="sysmonitor-status">Paused</span>
+      </div>
+    </div>
+
+    <div class="sysmonitor-error" id="sysmonitor-error"></div>
+
+    <div class="sysmonitor-summary">
+      <div class="stat-card">
+        <div class="stat-icon blue"><i class="fa-solid fa-microchip"></i></div>
+        <div>
+          <div class="stat-num" id="sysmonitor-cpu">—</div>
+          <div class="stat-label">CPU Usage</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon green"><i class="fa-solid fa-memory"></i></div>
+        <div>
+          <div class="stat-num" id="sysmonitor-ram">—</div>
+          <div class="stat-label">RAM Used</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon purple"><i class="fa-solid fa-hard-drive"></i></div>
+        <div>
+          <div class="stat-num" id="sysmonitor-disk">—</div>
+          <div class="stat-label">Disk Used</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon orange"><i class="fa-solid fa-temperature-half"></i></div>
+        <div>
+          <div class="stat-num" id="sysmonitor-temp">—</div>
+          <div class="stat-label">CPU Temp</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sysmonitor-charts">
+      <div class="sysmonitor-chart-card">
+        <div class="sysmonitor-chart-head">
+          <div class="sysmonitor-chart-title"><i class="fa-solid fa-chart-line"></i> CPU + RAM</div>
+          <div class="sysmonitor-proc-meta">3s refresh</div>
+        </div>
+        <div class="sysmonitor-chart-wrap">
+          <canvas id="sysmonitor-load-chart"></canvas>
+        </div>
+      </div>
+      <div class="sysmonitor-chart-card">
+        <div class="sysmonitor-chart-head">
+          <div class="sysmonitor-chart-title"><i class="fa-solid fa-temperature-high"></i> CPU Temperature</div>
+          <div class="sysmonitor-proc-meta">3s refresh</div>
+        </div>
+        <div class="sysmonitor-chart-wrap">
+          <canvas id="sysmonitor-temp-chart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div class="sysmonitor-proc-card" style="margin:16px 20px 20px">
+      <div class="sysmonitor-proc-head">
+        <div class="sysmonitor-proc-title"><i class="fa-solid fa-list-ol"></i> Top Processes</div>
+        <div class="sysmonitor-proc-meta" id="sysmonitor-proc-count">0 tracked</div>
+      </div>
+      <div class="table-wrap sysmonitor-table-wrap">
+        <table class="sysmonitor-table">
+          <thead>
+            <tr>
+              <th style="width:72px">PID</th>
+              <th>Process</th>
+              <th style="width:72px">CPU %</th>
+              <th style="width:72px">State</th>
+            </tr>
+          </thead>
+          <tbody id="sysmonitor-proc-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="card ssh-terminal-card" id="ssh-terminal-card">
+    <div class="card-header">
+      <div class="card-header-left">
+        <i class="fa-solid fa-terminal card-icon"></i>
+        <span class="card-title">SSH Terminal</span>
+      </div>
+    </div>
+    <div class="ssh-terminal-connect-row">
+      <select id="ssh-terminal-ip-sel" class="ssh-terminal-ip-sel" onchange="sshTermSelChange()">
+        <option value="">-- select device --</option>
+      </select>
+      <input id="ssh-terminal-ip-custom" class="ssh-terminal-ip-input"
+             type="text" placeholder="custom IP" autocomplete="off"
+             style="display:none">
+      <button class="ssh-terminal-btn primary" onclick="sshTermAddSession()">Add</button>
+    </div>
+    <div id="ssh-terminal-tabs" class="ssh-terminal-tabs"></div>
+    <div id="ssh-terminal-output" class="ssh-terminal-output"></div>
+    <div class="ssh-terminal-cmd-row">
+      <input id="ssh-terminal-cmd" class="ssh-terminal-cmd-input"
+             type="text" placeholder="command" disabled
+             onkeydown="sshTermHandleKey(event)" autocomplete="off">
+      <button id="ssh-terminal-send-btn" class="ssh-terminal-btn primary"
+              onclick="sshTermRun()" disabled>Run</button>
+    </div>
+    <div id="ssh-terminal-status" class="ssh-terminal-status"></div>
+    <div id="ssh-terminal-error" class="ssh-terminal-error"></div>
+  </div>
+
+  <!-- Hosts table -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-header-left">
+        <div class="card-title">
+          <i class="fa-solid fa-list"></i> Host List
+        </div>
+        <div class="search-wrap">
+          <i class="fa-solid fa-magnifying-glass"></i>
+          <input
+            class="search-input"
+            id="search-input"
+            type="text"
+            placeholder="Search IP, MAC, comment, manufacturer..."
+            oninput="filterTable(this.value)"
+          >
+        </div>
+      </div>
+      <div class="card-header-right">
+        <button class="btn-scp-src" id="btn-scp-src" disabled
+          onclick="setAsSCPSource()"
+          title="Use selected host as Multi SCP source">
+          <i class="fa-solid fa-upload"></i>
+          <span id="btn-scp-src-label">Set SCP Source</span>
+        </button>
+        <button class="btn btn-secondary" onclick="openAddModal()">
+          <i class="fa-solid fa-plus"></i> Add Comment
+        </button>
+        <div class="scan-footer" id="scan-footer">
+          <i class="fa-solid fa-circle-notch fa-spin-custom" id="spinner"></i>
+          <span id="scan-footer-text">Loading...</span>
+        </div>
+        <button onclick="toggleHostList()" title="Collapse / Expand"
+          style="background:none;border:none;cursor:pointer;padding:4px 6px;color:#9ca3af;transition:color .15s"
+          onmouseover="this.style.color='#374151'" onmouseout="this.style.color='#9ca3af'">
+          <i class="fa-solid fa-chevron-down" id="hostlist-chevron"
+             style="transition:transform .2s"></i>
+        </button>
+      </div>
+    </div>
+    <div id="hostlist-body">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:40px">#</th>
+            <th style="width:40px"><i class="fa-solid fa-circle-dot"></i></th>
+            <th><i class="fa-solid fa-desktop"></i>&nbsp; Hostname</th>
+            <th><i class="fa-solid fa-globe"></i>&nbsp; IP Address</th>
+            <th><i class="fa-solid fa-building"></i>&nbsp; Manufacturer</th>
+            <th><i class="fa-solid fa-id-card"></i>&nbsp; MAC Address</th>
+            <th><i class="fa-solid fa-tag"></i>&nbsp; Comments</th>
+            <th style="width:72px"></th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+    </div><!-- /hostlist-body -->
+  </div>
+
+  <div class="err" id="err"></div>
+
+  <!-- Multi SCP Card -->
+  <div class="card" id="scp-card">
+    <div class="card-header" style="cursor:pointer" onclick="toggleSCPPanel()">
+      <div class="card-title">
+        <i class="fa-solid fa-upload"></i> Multi SCP — File Transfer
+      </div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <span id="scp-summary" style="font-size:12px;color:#6b7280"></span>
+        <i class="fa-solid fa-chevron-down" id="scp-chevron"
+           style="color:#9ca3af;transition:transform .2s"></i>
+      </div>
+    </div>
+
+    <div id="scp-body" style="display:none">
+      <div class="scp-grid">
+
+        <!-- ── Source panel ── -->
+        <div class="scp-panel">
+          <div class="scp-panel-title">
+            <span><i class="fa-solid fa-hard-drive"></i>&nbsp; Source Device</span>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span id="scp-sel-count" style="font-weight:400;color:#2563eb;text-transform:none;letter-spacing:0"></span>
+              <button class="btn-icon" id="scp-refresh-btn" title="Refresh"
+                onclick="scpRefresh()" style="display:none;width:24px;height:24px;padding:0">
+                <i class="fa-solid fa-rotate" id="scp-refresh-icon"></i>
+              </button>
+            </div>
+          </div>
+          <div class="scp-source-bar">
+            <select class="scp-select" id="scp-source-sel" onchange="onSourceChange()">
+              <option value="">— select source device —</option>
+            </select>
+          </div>
+          <div id="scp-custom-bar" style="display:none;padding:8px 14px;border-bottom:1px solid #e5e7eb">
+            <input class="scp-input" id="scp-custom-ip" type="text"
+              placeholder="Enter IP, e.g. 192.168.3.60"
+              onkeydown="if(event.key==='Enter')scpBrowse(scpPath)">
+          </div>
+          <div class="scp-path-bar" id="scp-src-path-bar" style="display:none">
+            <span style="font-size:11px;color:#6b7280;white-space:nowrap">Path:</span>
+            <input class="scp-input scp-path-input" id="scp-src-path-input" type="text" value="/root"
+              onkeydown="if(event.key==='Enter')scpSrcGo()">
+            <button class="btn-icon" title="Go" onclick="scpSrcGo()"
+              style="width:26px;height:26px;padding:0;flex-shrink:0">
+              <i class="fa-solid fa-arrow-right"></i>
+            </button>
+          </div>
+          <div class="scp-breadcrumb" id="scp-breadcrumb">
+            <span style="color:#d1d5db"><i class="fa-solid fa-folder-open"></i>&nbsp;Select a source above</span>
+          </div>
+          <div class="scp-filelist" id="scp-filelist">
+            <div class="scp-empty">
+              <i class="fa-solid fa-arrow-up-from-bracket" style="margin-right:6px"></i>Select a source device to browse files
+            </div>
+          </div>
+          <div class="scp-actions-bar" id="scp-src-actions" style="display:none">
+            <button class="scp-act-btn" onclick="scpRefresh()" title="Refresh">
+              <i class="fa-solid fa-rotate"></i> Refresh
+            </button>
+            <button class="scp-act-btn" onclick="scpSrcMkdir()" title="New Folder">
+              <i class="fa-solid fa-folder-plus"></i> New Folder
+            </button>
+            <button class="scp-act-btn scp-act-btn-danger" id="scp-src-rm-btn"
+              onclick="scpSrcRm()" title="Remove selected" disabled>
+              <i class="fa-solid fa-trash"></i> Remove
+            </button>
+            <button class="scp-act-btn scp-act-btn-danger" id="scp-src-rename-btn"
+              onclick="scpSrcRename()" title="Rename selected" disabled>
+              <i class="fa-solid fa-pen"></i> Rename
+            </button>
+            <button class="scp-act-btn" id="scp-perm-btn"
+              onclick="openChmodModal()" title="Set file permissions" disabled>
+              <i class="fa-solid fa-lock"></i> Permissions
+            </button>
+            <button class="scp-act-btn scp-act-btn-primary" id="scp-upload-btn"
+              onclick="deployToHere()" title="Upload selected files to target" disabled>
+              <i class="fa-solid fa-upload"></i> Upload
+            </button>
+          </div>
+        </div>
+
+        <!-- ── Target Devices panel ── -->
+        <div class="scp-panel">
+          <div class="scp-panel-title">
+            <span><i class="fa-solid fa-microchip"></i>&nbsp; Target Devices</span>
+            <div style="display:flex;gap:6px">
+              <button class="btn-icon btn-icon-edit"
+                style="width:auto;padding:0 10px;height:22px;font-size:11px"
+                onclick="scpSelectAll()">All</button>
+              <button class="btn-icon"
+                style="width:auto;padding:0 10px;height:22px;font-size:11px;background:#f3f4f6;color:#374151"
+                onclick="scpDeselectAll()">None</button>
+            </div>
+          </div>
+          <div class="scp-path-bar">
+            <span style="font-size:11px;color:#6b7280;white-space:nowrap">Path:</span>
+            <input class="scp-input scp-path-input" id="scp-tgt-dest-input" type="text" value="/root/"
+              oninput="document.getElementById('scp-dest').value=this.value;scpRefreshTargetBrowsers()"
+              onkeydown="if(event.key==='Enter'){document.getElementById('scp-dest').value=this.value;scpRefreshTargetBrowsers();}">
+          </div>
+          <div class="target-list" id="scp-target-list">
+            <div class="scp-empty">No Luckfox devices. Run Rescan first.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Destination + Deploy ── -->
+      <div class="scp-bottom">
+        <span class="scp-dest-label">
+          <i class="fa-solid fa-folder-arrow-down"></i>&nbsp; Destination:
+        </span>
+        <input class="scp-dest-input" id="scp-dest" type="text" value="/root/"
+          oninput="var t=document.getElementById('scp-tgt-dest-input');if(t)t.value=this.value">
+        <button class="btn-deploy" id="scp-deploy-btn" onclick="deployMultiSCP()" disabled>
+          <i class="fa-solid fa-upload" id="scp-deploy-icon"></i> Deploy
+        </button>
+        <span class="scp-status-msg" id="scp-status"></span>
+      </div>
+
+      <!-- Results -->
+      <div class="scp-results" id="scp-results" style="display:none">
+        <div class="scp-results-title">
+          <i class="fa-solid fa-list-check" style="color:#2563eb"></i> Transfer Results
+        </div>
+        <div id="scp-results-list"></div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /main -->
+</div><!-- /app-main -->
+</div><!-- /app-shell -->
+
+<!-- Permissions (chmod) Modal -->
+<div id="chmod-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:500;align-items:center;justify-content:center" onclick="if(event.target===this)closeChmodModal()">
+  <div style="background:#fff;border-radius:10px;width:420px;max-width:95vw;box-shadow:0 8px 32px rgba(0,0,0,.2);overflow:hidden">
+    <div style="padding:16px 20px;border-bottom:1px solid #e5e7eb;font-weight:700;font-size:15px;display:flex;align-items:center;gap:8px">
+      <i class="fa-solid fa-lock" style="color:#2563eb"></i> File Permissions
+    </div>
+    <div style="padding:16px 20px">
+      <!-- Permission checkboxes -->
+      <table style="width:100%;border-collapse:collapse;margin-bottom:14px">
+        <thead>
+          <tr>
+            <th style="text-align:left;padding:5px 8px;font-size:12px;color:#6b7280;font-weight:600;border-bottom:1px solid #e5e7eb"></th>
+            <th style="padding:5px 8px;font-size:12px;color:#6b7280;font-weight:600;border-bottom:1px solid #e5e7eb;text-align:center">Read</th>
+            <th style="padding:5px 8px;font-size:12px;color:#6b7280;font-weight:600;border-bottom:1px solid #e5e7eb;text-align:center">Write</th>
+            <th style="padding:5px 8px;font-size:12px;color:#6b7280;font-weight:600;border-bottom:1px solid #e5e7eb;text-align:center">Execute</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style="padding:7px 8px;font-size:13px;font-weight:600">Owner</td>
+            <td style="text-align:center;padding:7px 8px"><input type="checkbox" class="chmod-cb" data-bit="256" onchange="chmodSync()"></td>
+            <td style="text-align:center;padding:7px 8px"><input type="checkbox" class="chmod-cb" data-bit="128" onchange="chmodSync()"></td>
+            <td style="text-align:center;padding:7px 8px"><input type="checkbox" class="chmod-cb" data-bit="64"  onchange="chmodSync()"></td>
+          </tr>
+          <tr style="background:#f9fafb">
+            <td style="padding:7px 8px;font-size:13px;font-weight:600">Group</td>
+            <td style="text-align:center;padding:7px 8px"><input type="checkbox" class="chmod-cb" data-bit="32"  onchange="chmodSync()"></td>
+            <td style="text-align:center;padding:7px 8px"><input type="checkbox" class="chmod-cb" data-bit="16"  onchange="chmodSync()"></td>
+            <td style="text-align:center;padding:7px 8px"><input type="checkbox" class="chmod-cb" data-bit="8"   onchange="chmodSync()"></td>
+          </tr>
+          <tr>
+            <td style="padding:7px 8px;font-size:13px;font-weight:600">Others</td>
+            <td style="text-align:center;padding:7px 8px"><input type="checkbox" class="chmod-cb" data-bit="4"   onchange="chmodSync()"></td>
+            <td style="text-align:center;padding:7px 8px"><input type="checkbox" class="chmod-cb" data-bit="2"   onchange="chmodSync()"></td>
+            <td style="text-align:center;padding:7px 8px"><input type="checkbox" class="chmod-cb" data-bit="1"   onchange="chmodSync()"></td>
+          </tr>
+        </tbody>
+      </table>
+      <!-- Special bits -->
+      <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px;font-size:13px">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="checkbox" class="chmod-cb" data-bit="2048" onchange="chmodSync()"> Set UID
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="checkbox" class="chmod-cb" data-bit="1024" onchange="chmodSync()"> Set GID
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="checkbox" class="chmod-cb" data-bit="512" onchange="chmodSync()"> Sticky Bit
+        </label>
+      </div>
+      <!-- Octal input -->
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;font-size:13px">
+        <span style="font-weight:600">Octal:</span>
+        <input id="chmod-octal" type="text" maxlength="4" value="0644"
+          style="width:72px;padding:5px 8px;border:1px solid #d1d5db;border-radius:5px;font-family:monospace;font-size:14px"
+          oninput="chmodOctalInput(this.value)">
+        <span style="color:#6b7280;font-size:12px">e.g. 0755, 0644, 0777</span>
+      </div>
+      <!-- Recursive -->
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-bottom:4px">
+        <input type="checkbox" id="chmod-recursive"> Set permissions recursively
+      </label>
+    </div>
+    <div style="padding:12px 20px;border-top:1px solid #e5e7eb;display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn btn-primary" onclick="applyChmod()">OK</button>
+      <button class="btn btn-secondary" onclick="closeChmodModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Edit / Add Comment Modal -->
+<div class="modal-overlay" id="modal-overlay" onclick="overlayClick(event)">
+  <div class="modal">
+    <div class="modal-title" id="modal-title">
+      <i class="fa-solid fa-tag"></i> Edit Comment
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="modal-key">Key (MAC or IP)</label>
+      <input class="form-input" id="modal-key" type="text" placeholder="e.g. AA:BB:CC:DD:EE:FF or 192.168.1.10">
+      <div class="form-hint">MAC address preferred — survives DHCP changes</div>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="modal-comment">Comment</label>
+      <input class="form-input" id="modal-comment" type="text" placeholder="e.g. Line 5 [GM10]">
+    </div>
+    <div class="modal-err" id="modal-err"></div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" id="modal-save-btn" onclick="doSaveComment()">
+        <i class="fa-solid fa-floppy-disk"></i> Save
+      </button>
+    </div>
+  </div>
+</div>
+
+<script src="assets/js/utils.js"></script>
+<script src="assets/js/hosts.js"></script>
+<script src="assets/js/comments.js"></script>
+<script src="assets/js/sidebar.js"></script>
+<script src="assets/js/scp.js"></script>
+<script src="assets/js/ssh-terminal.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="assets/js/sysmonitor.js"></script>
+<script src="assets/js/main.js"></script>
+</body>
+</html>

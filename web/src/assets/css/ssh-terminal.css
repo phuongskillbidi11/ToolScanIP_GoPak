@@ -1,0 +1,139 @@
+/* SSH Terminal panel — all rules scoped to avoid clash with .ssh-panel */
+.ssh-terminal-card {
+  margin-top: 0;
+}
+
+.ssh-terminal-output {
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  padding: 12px 14px;
+  min-height: 220px;
+  max-height: 400px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.ssh-terminal-connect-row {
+  display: flex;
+  gap: 8px;
+  padding: 12px 14px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.ssh-terminal-ip-input {
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  padding: 5px 10px;
+  width: 160px;
+}
+
+.ssh-terminal-cmd-row {
+  display: flex;
+  gap: 8px;
+  padding: 0 14px 12px;
+  align-items: center;
+}
+
+.ssh-terminal-cmd-input {
+  flex: 1;
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  padding: 5px 10px;
+}
+
+.ssh-terminal-btn {
+  font-size: 12px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid #d1d5db;
+  background: #f9fafb;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ssh-terminal-btn.primary {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
+}
+
+.ssh-terminal-btn.primary:hover { background: #1d4ed8; }
+.ssh-terminal-btn:disabled { opacity: .5; cursor: default; }
+
+.ssh-terminal-status {
+  font-size: 11px;
+  color: #6b7280;
+  padding: 0 14px 8px;
+}
+
+.ssh-terminal-error {
+  font-size: 12px;
+  color: #dc2626;
+  padding: 0 14px 6px;
+}
+
+.ssh-terminal-error:empty { display: none; }
+
+.ssh-terminal-ip-sel {
+  flex: 1;
+  font-size: 13px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  padding: 5px 8px;
+  min-width: 0;
+}
+
+.ssh-terminal-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px 14px 0;
+  border-bottom: 1px solid #e5e7eb;
+  min-height: 36px;
+}
+
+.ssh-terminal-tabs:empty {
+  display: none;
+}
+
+.ssh-terminal-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 6px 6px 0 0;
+  font-size: 12px;
+  font-family: 'Courier New', monospace;
+  border: 1px solid #e5e7eb;
+  border-bottom: none;
+  background: #f3f4f6;
+  cursor: pointer;
+  white-space: nowrap;
+  color: #6b7280;
+}
+
+.ssh-terminal-tab.active {
+  background: #1e1e1e;
+  border-color: #374151;
+  color: #d4d4d4;
+}
+
+.ssh-terminal-tab-close {
+  font-size: 14px;
+  line-height: 1;
+  opacity: .6;
+  padding: 0 2px;
+}
+
+.ssh-terminal-tab-close:hover {
+  opacity: 1;
+}

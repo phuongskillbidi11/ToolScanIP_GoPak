@@ -1,0 +1,14 @@
+# errors.log — Multi-IP SSH Terminal Sprint 3
+
+Executor: append an entry here whenever you hit an error, unexpected behavior,
+or have to deviate from tasks.md. Format:
+
+```
+[TASK] [DATE TIME] DESCRIPTION
+Root cause: ...
+Fix applied: ...
+```
+
+---
+
+<!-- entries appended below during implementation -->

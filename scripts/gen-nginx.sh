@@ -187,7 +187,7 @@ function doRescan() {{
     var btn = document.getElementById('rescanBtn');
     btn.disabled = true;
     btn.textContent = '⏳ Scanning...';
-    fetch('/rescan')
+    fetch('/regen')
         .then(function() {{ location.reload(); }})
         .catch(function() {{
             btn.disabled = false;

@@ -41,6 +41,26 @@
       "name": "multi-scp",
       "description": "Push files from any scanned host to multiple Luckfox devices in parallel via the web UI.",
       "path": "skills/multi-scp/SKILL.md"
+    },
+    {
+      "name": "karpathy-guidelines",
+      "description": "Universal behavioral rules preventing common LLM coding mistakes — load alongside any domain skill.",
+      "path": "skills/karpathy-guidelines/SKILL.md"
+    },
+    {
+      "name": "c-scanner",
+      "description": "Core C scanner codebase — ARP scanning, OUI lookup, web HTTP server, and build system.",
+      "path": "skills/c-scanner/SKILL.md"
+    },
+    {
+      "name": "deploy",
+      "description": "Cross-compile and deploy ipscanner to Pi 1, Pi 2, and Orange Pi via SSH/SCP.",
+      "path": "skills/deploy/SKILL.md"
+    },
+    {
+      "name": "example",
+      "description": "Template skill — copy this folder, rename it, fill in the sections, then run update-manifest.sh.",
+      "path": "skills/example/SKILL.md"
     }
   ]
 }
