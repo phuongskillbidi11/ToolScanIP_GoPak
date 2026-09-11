@@ -1,7 +1,7 @@
 /* ── Sidebar ─────────────────────────────────────────────────────────────── */
 
 /* pin state: which panels are currently shown */
-var sidebarPinned = { hostlist: true, scp: true, 'sys-monitor': false, 'ssh-terminal': false };
+var sidebarPinned = { hostlist: true, scp: true, 'sys-monitor': false, 'ssh-terminal': false, 'service-logs': false };
 var sidebarActive = 'hostlist';
 
 /* Map panel id → the DOM element to show/hide */
@@ -10,11 +10,12 @@ function getPanelEl(id) {
   if (id === 'scp')      return document.getElementById('scp-card');
   if (id === 'sys-monitor') return document.getElementById('sysmonitor-card');
   if (id === 'ssh-terminal') return document.getElementById('ssh-terminal-card');
+  if (id === 'service-logs') return document.getElementById('service-logs-card');
   return null;
 }
 
 function applyPinState() {
-  ['hostlist', 'scp', 'sys-monitor', 'ssh-terminal'].forEach(function(id) {
+  ['hostlist', 'scp', 'sys-monitor', 'ssh-terminal', 'service-logs'].forEach(function(id) {
     var el  = getPanelEl(id);
     var pin = document.getElementById('pin-' + id);
     if (!el) return;
@@ -30,6 +31,9 @@ function applyPinState() {
   }
   if (typeof sshTermSetPinned === 'function') {
     sshTermSetPinned(!!sidebarPinned['ssh-terminal']);
+  }
+  if (typeof svcLogsSetPinned === 'function') {
+    svcLogsSetPinned(!!sidebarPinned['service-logs']);
   }
 }
 

@@ -471,6 +471,9 @@ function scpRenderResults(results) {
   });
   panel.style.display = '';
 
+  /* Refresh source browser deploy badges (no re-fetch — uses cached entries) */
+  if (scpCurrentEntries.length) scpRenderFiles(scpCurrentEntries, scpCurrentPath);
+
   /* Refresh any open target browsers (multi-target mode only) */
   if (scpMode === 'multi-target') {
     document.querySelectorAll('.target-browser.open').forEach(function(el) {
@@ -1134,7 +1137,7 @@ function renderTargetBrowserFiles(ip, path, panel) {
   var parts = path.split('/').filter(Boolean);
   var rootA = document.createElement('a');
   rootA.innerHTML = '<i class="fa-solid fa-hard-drive"></i>&nbsp;/';
-  rootA.onclick   = function(){ renderTargetBrowserFiles(ip, '/', panel); };
+  rootA.onclick   = function(e){ e.stopPropagation(); renderTargetBrowserFiles(ip, '/', panel); };
   bcEl.appendChild(rootA);
   var cum = '';
   parts.forEach(function(part, i) {
@@ -1149,7 +1152,7 @@ function renderTargetBrowserFiles(ip, path, panel) {
     } else {
       var a = document.createElement('a');
       a.textContent = part;
-      (function(p){ a.onclick = function(){ renderTargetBrowserFiles(ip, p, panel); }; })(cum);
+      (function(p){ a.onclick = function(e){ e.stopPropagation(); renderTargetBrowserFiles(ip, p, panel); }; })(cum);
       bcEl.appendChild(a);
     }
   });
@@ -1174,7 +1177,7 @@ function renderTargetBrowserFiles(ip, path, panel) {
         back.className = 'target-file-row';
         back.innerHTML = '<span class="scp-ico-dir"><i class="fa-solid fa-turn-up"></i></span>' +
                          '<span style="font-weight:600;color:#374151">..</span>';
-        back.onclick = function(){ renderTargetBrowserFiles(ip, parent, panel); };
+        back.onclick = function(e){ e.stopPropagation(); renderTargetBrowserFiles(ip, parent, panel); };
         listEl.appendChild(back);
       }
 
@@ -1224,11 +1227,13 @@ function renderTargetBrowserFiles(ip, path, panel) {
           });
           if (isDir) {
             fr.onclick = function(e) {
+              e.stopPropagation();
               if (e.target === cb) return;
               renderTargetBrowserFiles(ip, fp, panel);
             };
           } else {
             fr.onclick = function(e) {
+              e.stopPropagation();
               if (e.target === cb) return;
               cb.checked = !cb.checked;
               cb.dispatchEvent(new Event('change'));

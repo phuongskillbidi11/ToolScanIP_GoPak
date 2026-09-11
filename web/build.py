@@ -15,8 +15,8 @@ SRC_HTML  = 'web/src/scanner.html'
 OUT_HTML  = 'web/scanner.html'
 CSS_DIR   = 'web/src/assets/css'
 JS_DIR    = 'web/src/assets/js'
-CSS_ORDER = ['base', 'sidebar', 'components', 'table', 'scp', 'sysmonitor', 'ssh-terminal']
-JS_ORDER  = ['utils', 'hosts', 'comments', 'sidebar', 'scp', 'ssh-terminal', 'sysmonitor', 'main']
+CSS_ORDER = ['base', 'sidebar', 'components', 'table', 'scp', 'sysmonitor', 'ssh-terminal', 'service-logs']
+JS_ORDER  = ['utils', 'hosts', 'comments', 'sidebar', 'scp', 'ssh-terminal', 'service-logs', 'sysmonitor', 'main']
 
 def slurp(path):
     with open(path, encoding='utf-8') as f:

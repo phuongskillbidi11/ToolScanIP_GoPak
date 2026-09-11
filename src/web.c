@@ -1698,6 +1698,78 @@ static void write_landing_page(void)
     }
     fputs("</tbody>\n</table>\n", f);
 
+    /* ── Service status ── */
+    {
+        char status[32] = "unknown";
+        int  restarts   = -1;
+        FILE *sp;
+
+        sp = popen("systemctl is-active ipscanner 2>&1", "r");
+        if (sp) {
+            char buf[32] = "";
+            if (fgets(buf, sizeof(buf), sp)) {
+                size_t sl = strlen(buf);
+                if (sl && buf[sl-1] == '\n') buf[sl-1] = '\0';
+                snprintf(status, sizeof(status), "%s", buf);
+            }
+            pclose(sp);
+        }
+
+        sp = popen("systemctl show ipscanner --property=NRestarts 2>&1", "r");
+        if (sp) {
+            char buf[64] = "";
+            if (fgets(buf, sizeof(buf), sp)) sscanf(buf, "NRestarts=%d", &restarts);
+            pclose(sp);
+        }
+
+        int is_active = strcmp(status, "active") == 0;
+        int is_failed = strcmp(status, "failed") == 0;
+        const char *dot_color = is_active ? "#a6e3a1" : (is_failed ? "#f38ba8" : "#6c7086");
+
+        fputs("<h2>&#9881; ipscanner.service</h2>\n", f);
+        fprintf(f, "<div style=\"display:flex;align-items:center;gap:16px;"
+                "margin-bottom:12px;font-size:13px\">"
+                "<span style=\"color:%s;font-weight:bold\">&#9679; %s</span>",
+                dot_color, status);
+        if (restarts >= 0)
+            fprintf(f, "<span style=\"color:#6c7086\">Restarts: "
+                    "<span style=\"color:#cdd6f4\">%d</span></span>", restarts);
+        fputs("</div>\n", f);
+
+        fputs("<div style=\"background:#181825;border-radius:8px;padding:12px 14px;"
+              "font-family:'Courier New',monospace;font-size:11px;line-height:1.7;"
+              "max-height:340px;overflow-y:auto;margin-bottom:24px\">\n", f);
+
+        sp = popen("journalctl -u ipscanner -n 20 --no-pager --output=short-iso 2>&1", "r");
+        int got = 0;
+        if (sp) {
+            char line[512];
+            while (fgets(line, sizeof(line), sp)) {
+                got++;
+                size_t ll = strlen(line);
+                if (ll && line[ll-1] == '\n') line[ll-1] = '\0';
+
+                const char *color = "#cdd6f4";
+                if (strstr(line,"Failed")||strstr(line,"error")||
+                    strstr(line,"killed")||strstr(line,"signal"))
+                    color = "#f38ba8";
+                else if (strstr(line,"restart")||strstr(line,"Stopped")||
+                         strstr(line,"Deactivated"))
+                    color = "#f9e2af";
+
+                fprintf(f, "<div style=\"color:%s;white-space:pre-wrap;"
+                        "word-break:break-all\">", color);
+                fhtml(f, line);
+                fputs("</div>\n", f);
+            }
+            pclose(sp);
+        }
+        if (!got)
+            fputs("<div style=\"color:#6c7086\">"
+                  "No log entries found for ipscanner.service</div>\n", f);
+        fputs("</div>\n", f);
+    }
+
     /* ── JavaScript ── */
     fputs("<script>\n"
           "document.getElementById('scannerLink').href="
@@ -1723,6 +1795,92 @@ static void write_landing_page(void)
 
     fclose(f);
     printf("  [regen] landing page written\n");
+}
+
+static void route_api_service_logs(int fd)
+{
+    /* ── 1. Log lines ─────────────────────────────────────────────────────── */
+    char line[512];
+    FILE *fp = popen("journalctl -u ipscanner -n 100 --no-pager --quiet "
+                     "--output=short-iso 2>&1", "r");
+    wstr(fd, "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n"
+             "Connection: close\r\n\r\n");
+    wstr(fd, "{\"lines\":[");
+    int first = 1;
+    if (fp) {
+        while (fgets(line, sizeof(line), fp)) {
+            /* if this line filled the buffer without a trailing newline,
+             * it's an over-long journal entry — drain the remainder so the
+             * continuation isn't parsed as a separate record */
+            size_t llen = strlen(line);
+            if (llen == sizeof(line) - 1 && line[llen - 1] != '\n') {
+                int c;
+                while ((c = fgetc(fp)) != EOF && c != '\n') { }
+            }
+            /* short-iso format: "2026-06-01T15:44:50+07:00 host svc[pid]: msg" */
+            char ts[40] = "", msg[460] = "";
+            char *sp = strchr(line, ' ');
+            if (sp) {
+                size_t tl = (size_t)(sp - line);
+                if (tl >= sizeof(ts)) tl = sizeof(ts) - 1;
+                memcpy(ts, line, tl);
+                ts[tl] = '\0';
+                /* skip "host svc[pid]: " prefix — find ": " after pid */
+                char *colon = strstr(sp, "]: ");
+                if (colon) snprintf(msg, sizeof(msg), "%s", colon + 3);
+                else       snprintf(msg, sizeof(msg), "%s", sp + 1);
+                /* strip trailing newline */
+                size_t ml = strlen(msg);
+                if (ml && msg[ml - 1] == '\n') msg[ml - 1] = '\0';
+            } else {
+                snprintf(msg, sizeof(msg), "%s", line);
+            }
+            /* level detection */
+            const char *level = "info";
+            if (strstr(msg, "Failed") || strstr(msg, "error") ||
+                strstr(msg, "killed") || strstr(msg, "signal"))
+                level = "error";
+            else if (strstr(msg, "restart") || strstr(msg, "Stopped") ||
+                     strstr(msg, "Deactivated"))
+                level = "warn";
+
+            if (!first) wstr(fd, ",");
+            first = 0;
+            wstr(fd, "{\"ts\":");
+            json_str(fd, ts);
+            wstr(fd, ",\"msg\":");
+            json_str(fd, msg);
+            wfmt(fd, ",\"level\":\"%s\"}", level);
+        }
+        pclose(fp);
+    }
+    wstr(fd, "]");
+
+    /* ── 2. restart_count ─────────────────────────────────────────────────── */
+    int restarts = -1;
+    fp = popen("systemctl show ipscanner --property=NRestarts 2>&1", "r");
+    if (fp) {
+        char buf[64] = "";
+        if (fgets(buf, sizeof(buf), fp)) sscanf(buf, "NRestarts=%d", &restarts);
+        pclose(fp);
+    }
+    wfmt(fd, ",\"restart_count\":%d", restarts);
+
+    /* ── 3. status ────────────────────────────────────────────────────────── */
+    char status[32] = "inactive";
+    fp = popen("systemctl is-active ipscanner 2>&1", "r");
+    if (fp) {
+        char buf[32] = "";
+        if (fgets(buf, sizeof(buf), fp)) {
+            size_t sl = strlen(buf);
+            if (sl && buf[sl - 1] == '\n') buf[sl - 1] = '\0';
+            snprintf(status, sizeof(status), "%s", buf);
+        }
+        pclose(fp);
+    }
+    wstr(fd, ",\"status\":");
+    json_str(fd, status);
+    wstr(fd, "}\n");
 }
 
 /* GET /regen — rescan + rebuild nginx config + rebuild landing page + reload nginx */
@@ -1845,6 +2003,8 @@ void web_serve(const char *iface, const char *comments_file,
                 route_api_scan(fd);
             else if (strcmp(path, "/api/sys-stats") == 0)
                 route_api_sys_stats(fd);
+            else if (strncmp(path, "/api/service-logs", 17) == 0)
+                route_api_service_logs(fd);
             else if (strcmp(path, "/rescan") == 0)
                 route_rescan(fd);
             else if (strcmp(path, "/regen") == 0)

@@ -12,6 +12,7 @@
 <link rel="stylesheet" href="assets/css/scp.css">
 <link rel="stylesheet" href="assets/css/sysmonitor.css">
 <link rel="stylesheet" href="assets/css/ssh-terminal.css">
+<link rel="stylesheet" href="assets/css/service-logs.css">
 </head>
 <body>
 
@@ -73,6 +74,13 @@
       <span class="nav-text">SSH Terminal</span>
       <i class="fa-solid fa-thumbtack pin-icon" id="pin-ssh-terminal"
          onclick="pinClick(event,'ssh-terminal')" title="Pin panel"></i>
+    </div>
+    <div class="nav-item" id="nav-service-logs" title="Service Logs"
+         onclick="navClick('service-logs')">
+      <i class="fa-solid fa-scroll"></i>
+      <span class="nav-text">Service Logs</span>
+      <i class="fa-solid fa-thumbtack pin-icon" id="pin-service-logs"
+         onclick="pinClick(event,'service-logs')" title="Pin panel"></i>
     </div>
   </div>
 
@@ -251,6 +259,31 @@
     </div>
     <div id="ssh-terminal-status" class="ssh-terminal-status"></div>
     <div id="ssh-terminal-error" class="ssh-terminal-error"></div>
+  </div>
+
+  <div class="card" id="service-logs-card" style="display:none">
+    <div class="svc-logs-header">
+      <span class="svc-logs-title"><i class="fa-solid fa-scroll"></i> Service Logs</span>
+      <div style="display:flex;gap:6px;align-items:center">
+        <button class="svc-logs-btn active-refresh" id="svc-autorefresh-btn"
+                onclick="toggleSvcLogsAutoRefresh()">
+          <i class="fa-solid fa-rotate"></i> Auto-refresh: ON
+        </button>
+        <button class="svc-logs-btn" onclick="svcLogsRefresh()">
+          <i class="fa-solid fa-rotate-right"></i> Refresh
+        </button>
+      </div>
+    </div>
+    <div class="svc-logs-status-bar">
+      <span>
+        <span class="svc-status-dot inactive" id="svc-status-dot"></span>
+        <span class="svc-status-label inactive" id="svc-status-label">inactive</span>
+      </span>
+      <span>Restarts: <strong id="svc-restart-count">—</strong></span>
+    </div>
+    <div class="svc-logs-output" id="svc-logs-output">
+      <div class="svc-logs-empty">Pin panel to load logs</div>
+    </div>
   </div>
 
   <!-- Hosts table -->
@@ -550,6 +583,7 @@
 <script src="assets/js/sidebar.js"></script>
 <script src="assets/js/scp.js"></script>
 <script src="assets/js/ssh-terminal.js"></script>
+<script src="assets/js/service-logs.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script src="assets/js/sysmonitor.js"></script>
 <script src="assets/js/main.js"></script>
