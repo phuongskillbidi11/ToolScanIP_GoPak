@@ -1,3 +1,12 @@
+function scpFriendlyError(raw) {
+  if (!raw) return 'Unknown error';
+  if (raw.indexOf('REMOTE HOST IDENTIFICATION HAS CHANGED') !== -1)
+    return 'SSH host key changed for this device — it was auto-reset, retry the action.';
+  if (raw.indexOf('Permission denied') !== -1)
+    return 'SSH login rejected — wrong password or key for this device.';
+  return raw.substring(0, 200);
+}
+
 function scpUpdateSelCount() {
   var n = scpSelected.size;
   document.getElementById('scp-sel-count').textContent = n ? n + ' selected' : '';
@@ -183,7 +192,7 @@ function scpBrowse(path) {
       if (data.error) {
         document.getElementById('scp-filelist').innerHTML =
           '<div class="scp-empty"><i class="fa-solid fa-triangle-exclamation" style="color:#dc2626;margin-right:6px"></i>' +
-          escHtml(data.error.substring(0, 200)) + '</div>';
+          escHtml(scpFriendlyError(data.error)) + '</div>';
         return;
       }
       scpRenderFiles(data.entries, path);
@@ -408,7 +417,7 @@ function deployMultiSCP() {
   .then(function(r){ return r.json(); })
   .then(function(data) {
     if (data.error) {
-      document.getElementById('scp-status').textContent = 'Error: ' + data.error;
+      document.getElementById('scp-status').textContent = 'Error: ' + scpFriendlyError(data.error);
       return;
     }
     scpRenderResults(data.results);
@@ -541,7 +550,7 @@ function scpMode2Browse(path) {
       if (data.error) {
         document.getElementById('scp-mode2-filelist').innerHTML =
           '<div class="scp-empty"><i class="fa-solid fa-triangle-exclamation" style="color:#dc2626;margin-right:6px"></i>' +
-          escHtml(data.error.substring(0, 200)) + '</div>';
+          escHtml(scpFriendlyError(data.error)) + '</div>';
         return;
       }
       scpMode2RenderDirs(data.entries, path);
@@ -698,7 +707,7 @@ function scpSrcMkdir() {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: 'ip=' + encodeURIComponent(scpSourceIP) + '&path=' + encodeURIComponent(path)
   }).then(function(r){ return r.json(); })
-    .then(function(d){ if (d.error) alert('Error: ' + d.error); else scpBrowse(scpPath); })
+    .then(function(d){ if (d.error) alert('Error: ' + scpFriendlyError(d.error)); else scpBrowse(scpPath); })
     .catch(function(e){ alert('Error: ' + e.message); });
 }
 
@@ -713,7 +722,7 @@ function scpSrcRm() {
     }).then(function(r){ return r.json(); });
   })).then(function(res) {
     var errs = res.filter(function(d){ return d.error; });
-    if (errs.length) alert('Some failed:\n' + errs.map(function(d){ return d.error; }).join('\n'));
+    if (errs.length) alert('Some failed:\n' + errs.map(function(d){ return scpFriendlyError(d.error); }).join('\n'));
     scpSelected.clear(); scpUpdateSelCount(); scpBrowse(scpPath);
   }).catch(function(e){ alert('Error: ' + e.message); });
 }
@@ -731,7 +740,7 @@ function scpSrcRename() {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: 'ip=' + encodeURIComponent(scpSourceIP) + '&from=' + encodeURIComponent(oldPath) + '&to=' + encodeURIComponent(newPath)
   }).then(function(r){ return r.json(); })
-    .then(function(d){ if (d.error) alert('Error: ' + d.error); else { scpSelected.clear(); scpUpdateSelCount(); scpBrowse(scpPath); }})
+    .then(function(d){ if (d.error) alert('Error: ' + scpFriendlyError(d.error)); else { scpSelected.clear(); scpUpdateSelCount(); scpBrowse(scpPath); }})
     .catch(function(e){ alert('Error: ' + e.message); });
 }
 
@@ -787,7 +796,7 @@ function applyChmod() {
   })
   .then(function(r) { return r.json(); })
   .then(function(d) {
-    if (d.error) { alert('chmod failed: ' + d.error); return; }
+    if (d.error) { alert('chmod failed: ' + scpFriendlyError(d.error)); return; }
     closeChmodModal();
     scpSelected.clear();
     scpUpdateSelCount();
@@ -845,7 +854,7 @@ function scpTgtBrowse(path) {
       if (data.error) {
         document.getElementById('scp-tgt-filelist').innerHTML =
           '<div class="scp-empty"><i class="fa-solid fa-triangle-exclamation" style="color:#dc2626;margin-right:6px"></i>' +
-          escHtml(data.error.substring(0, 200)) + '</div>';
+          escHtml(scpFriendlyError(data.error)) + '</div>';
         return;
       }
       scpTgtRenderFiles(data.entries, path);
@@ -996,7 +1005,7 @@ function scpTgtMkdir() {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: 'ip=' + encodeURIComponent(scpTgtIP) + '&path=' + encodeURIComponent(path)
   }).then(function(r){ return r.json(); })
-    .then(function(d){ if (d.error) alert('Error: ' + d.error); else scpTgtBrowse(scpTgtPath); })
+    .then(function(d){ if (d.error) alert('Error: ' + scpFriendlyError(d.error)); else scpTgtBrowse(scpTgtPath); })
     .catch(function(e){ alert('Error: ' + e.message); });
 }
 
@@ -1011,7 +1020,7 @@ function scpTgtRm() {
     }).then(function(r){ return r.json(); });
   })).then(function(res) {
     var errs = res.filter(function(d){ return d.error; });
-    if (errs.length) alert('Some failed:\n' + errs.map(function(d){ return d.error; }).join('\n'));
+    if (errs.length) alert('Some failed:\n' + errs.map(function(d){ return scpFriendlyError(d.error); }).join('\n'));
     scpTgtSel.clear(); scpTgtUpdateSelCount(); scpTgtBrowse(scpTgtPath);
   }).catch(function(e){ alert('Error: ' + e.message); });
 }
@@ -1029,7 +1038,7 @@ function scpTgtRename() {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: 'ip=' + encodeURIComponent(scpTgtIP) + '&from=' + encodeURIComponent(oldPath) + '&to=' + encodeURIComponent(newPath)
   }).then(function(r){ return r.json(); })
-    .then(function(d){ if (d.error) alert('Error: ' + d.error); else { scpTgtSel.clear(); scpTgtUpdateSelCount(); scpTgtBrowse(scpTgtPath); }})
+    .then(function(d){ if (d.error) alert('Error: ' + scpFriendlyError(d.error)); else { scpTgtSel.clear(); scpTgtUpdateSelCount(); scpTgtBrowse(scpTgtPath); }})
     .catch(function(e){ alert('Error: ' + e.message); });
 }
 
@@ -1052,7 +1061,7 @@ function deployToHere() {
   })
   .then(function(r){ return r.json(); })
   .then(function(data) {
-    if (data.error) { alert('Transfer error: ' + data.error); return; }
+    if (data.error) { alert('Transfer error: ' + scpFriendlyError(data.error)); return; }
     var r = data.results[0];
     if (r.status === 'ok') {
       scpTgtBrowse(scpTgtPath);
@@ -1153,7 +1162,7 @@ function renderTargetBrowserFiles(ip, path, panel) {
     .then(function(data) {
       if (data.error) {
         listEl.innerHTML = '<div style="padding:10px;font-size:12px;color:#dc2626">' +
-          '<i class="fa-solid fa-triangle-exclamation"></i>&nbsp;' + escHtml(data.error.substring(0,120)) + '</div>';
+          '<i class="fa-solid fa-triangle-exclamation"></i>&nbsp;' + escHtml(scpFriendlyError(data.error)) + '</div>';
         return;
       }
       listEl.innerHTML = '';
@@ -1197,7 +1206,7 @@ function renderTargetBrowserFiles(ip, path, panel) {
         var frow = document.createElement('div');
         frow.className = 'target-file-row';
         frow.innerHTML =
-          (!isDir ? '<input type="checkbox" class="tgt-fcb" data-path="' + escHtml(fullPath) + '">' : '<span style="width:14px;flex-shrink:0"></span>') +
+          '<input type="checkbox" class="tgt-fcb" data-path="' + escHtml(fullPath) + '">' +
           '<span class="' + icoClass + '"><i class="fa-solid ' + icoName + '"></i></span>' +
           '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' +
                (isDir ? 'font-weight:600;color:#374151' : '') + '">' +
@@ -1206,23 +1215,26 @@ function renderTargetBrowserFiles(ip, path, panel) {
           (isDir ? '' : '<span class="scp-fsize">' + scpFmtSize(entry.size) + '</span>') +
           doneHtml;
 
-        if (isDir) {
-          frow.onclick = function(){ renderTargetBrowserFiles(ip, fullPath, panel); };
-        } else {
-          (function(fp, fr) {
-            var cb = fr.querySelector('.tgt-fcb');
-            cb.addEventListener('change', function(e) {
-              e.stopPropagation();
-              fr.classList.toggle('selected', cb.checked);
-              tgtUpdateBtns(panel.id);
-            });
+        (function(fp, fr) {
+          var cb = fr.querySelector('.tgt-fcb');
+          cb.addEventListener('change', function(e) {
+            e.stopPropagation();
+            fr.classList.toggle('selected', cb.checked);
+            tgtUpdateBtns(panel.id);
+          });
+          if (isDir) {
+            fr.onclick = function(e) {
+              if (e.target === cb) return;
+              renderTargetBrowserFiles(ip, fp, panel);
+            };
+          } else {
             fr.onclick = function(e) {
               if (e.target === cb) return;
               cb.checked = !cb.checked;
               cb.dispatchEvent(new Event('change'));
             };
-          })(fullPath, frow);
-        }
+          }
+        })(fullPath, frow);
         listEl.appendChild(frow);
       });
     })
@@ -1262,7 +1274,7 @@ function tgtMkdir(ip, browserId) {
     headers: {'Content-Type':'application/json'},
     body: JSON.stringify({ip: ip, path: path.replace(/\/$/, '') + '/' + name.trim()})
   }).then(function(r){ return r.json(); })
-    .then(function(d){ if (d.error) alert('Error: ' + d.error); else renderTargetBrowserFiles(ip, path, panel); });
+    .then(function(d){ if (d.error) alert('Error: ' + scpFriendlyError(d.error)); else renderTargetBrowserFiles(ip, path, panel); });
 }
 
 function tgtRm(ip, browserId) {
@@ -1281,7 +1293,7 @@ function tgtRm(ip, browserId) {
       body: JSON.stringify({ip: ip, path: c.dataset.path})
     }).then(function(r){ return r.json(); })
       .then(function(d){
-        if (d.error) alert('Error deleting ' + c.dataset.path + ': ' + d.error);
+        if (d.error) alert('Error deleting ' + c.dataset.path + ': ' + scpFriendlyError(d.error));
         if (++done === checked.length) renderTargetBrowserFiles(ip, path, panel);
       });
   });
@@ -1305,7 +1317,7 @@ function tgtRename(ip, browserId) {
     body: JSON.stringify({ip: ip, path: selPath, newpath: newPath})
   }).then(function(r){ return r.json(); })
     .then(function(d){
-      if (d.error) { alert('Error: ' + d.error); return; }
+      if (d.error) { alert('Error: ' + scpFriendlyError(d.error)); return; }
       renderTargetBrowserFiles(ip, path, panel);
     });
 }

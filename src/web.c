@@ -32,6 +32,7 @@ static char       g_iface[64];
 static char       g_comments_file[256];
 static char       g_mqttmap_file[256];
 static char       g_last_scan[64];
+static int        g_last_good_dev_count = 0;
 
 #define SYSMON_MAX_PROCS 256
 
@@ -719,6 +720,20 @@ static void route_api_browse(int fd, const char *query)
     ls_out[n] = '\0';
     int rc = WEXITSTATUS(pclose(fp));
 
+    if (rc != 0 && !is_local && strstr(ls_out, "REMOTE HOST IDENTIFICATION HAS CHANGED")) {
+        char kc[160];
+        snprintf(kc, sizeof(kc), "ssh-keygen -R '%s' >/dev/null 2>&1", ip);
+        system(kc);
+
+        memset(ls_out, 0, sizeof(ls_out));
+        fp = popen(cmd, "r");
+        if (fp) {
+            n = fread(ls_out, 1, sizeof(ls_out) - 1, fp);
+            ls_out[n] = '\0';
+            rc = WEXITSTATUS(pclose(fp));
+        }
+    }
+
     if (rc != 0) {
         wstr(fd, "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n"
                  "Connection: close\r\n\r\n");
@@ -840,6 +855,36 @@ typedef struct {
     char output[2048];
 } ScpJob;
 
+/* Run `cmd` via popen(), capturing stdout+exit code into out/outsz.
+ * If it fails specifically because of a changed SSH host key, run
+ * ssh-keygen -R once and retry `cmd` exactly once. Any other failure
+ * (or a failure that persists after the retry) is returned as-is —
+ * this never retries more than once and never masks a non-host-key
+ * error. `cmd` must be safe to run a second time unchanged. */
+static int ssh_run_with_hostkey_retry(const char *ip, const char *cmd,
+                                       char *out, size_t outsz)
+{
+    FILE *fp = popen(cmd, "r");
+    if (!fp) { snprintf(out, outsz, "popen failed"); return -1; }
+    size_t n = fread(out, 1, outsz - 1, fp);
+    out[n] = '\0';
+    int rc = WEXITSTATUS(pclose(fp));
+
+    if (rc != 0 && strstr(out, "REMOTE HOST IDENTIFICATION HAS CHANGED")) {
+        char kc[160];
+        snprintf(kc, sizeof(kc), "ssh-keygen -R '%s' >/dev/null 2>&1", ip);
+        system(kc);
+
+        fp = popen(cmd, "r");
+        if (fp) {
+            n = fread(out, 1, outsz - 1, fp);
+            out[n] = '\0';
+            rc = WEXITSTATUS(pclose(fp));
+        }
+    }
+    return rc;
+}
+
 static void *scp_worker(void *arg)
 {
     ScpJob *job = (ScpJob *)arg;
@@ -909,16 +954,8 @@ static void *scp_worker(void *arg)
         fclose(dlf);
 
         snprintf(cmd, sizeof(cmd), "chmod +x '%s' && '%s'", dlscript, dlscript);
-        fp = popen(cmd, "r");
-        if (!fp) {
-            snprintf(job->output, sizeof(job->output), "download: popen failed");
-            job->exit_code = -1;
-            unlink(dlscript);
-            goto cleanup;
-        }
-        n = fread(job->output, 1, sizeof(job->output) / 2 - 1, fp);
-        job->output[n] = '\0';
-        job->exit_code = WEXITSTATUS(pclose(fp));
+        job->exit_code = ssh_run_with_hostkey_retry(job->source_ip, cmd,
+                              job->output, sizeof(job->output) / 2);
         unlink(dlscript);
     }
 
@@ -938,18 +975,13 @@ static void *scp_worker(void *arg)
         "root@%s 'mkdir -p \"%s\"' 2>&1",
         job->target_ip, job->target_dir);
     {
-        FILE *mkfp = popen(cmd, "r");
-        if (mkfp) {
-            char mkbuf[256] = {0};
-            size_t mk = fread(mkbuf, 1, sizeof(mkbuf) - 1, mkfp);
-            mkbuf[mk] = '\0';
-            int mkrc = WEXITSTATUS(pclose(mkfp));
-            if (mkrc != 0) {
-                snprintf(job->output, sizeof(job->output),
-                    "[mkdir -p %s failed]\n%s", job->target_dir, mkbuf);
-                job->exit_code = mkrc;
-                goto cleanup;
-            }
+        char mkbuf[256] = {0};
+        int mkrc = ssh_run_with_hostkey_retry(job->target_ip, cmd, mkbuf, sizeof(mkbuf));
+        if (mkrc != 0) {
+            snprintf(job->output, sizeof(job->output),
+                "[mkdir -p %s failed]\n%s", job->target_dir, mkbuf);
+            job->exit_code = mkrc;
+            goto cleanup;
         }
     }
 
@@ -982,49 +1014,9 @@ static void *scp_worker(void *arg)
         snprintf(cmd, sizeof(cmd), "chmod +x '%s'", script);
         system(cmd);
 
-        fp = popen(script, "r");
-        if (!fp) {
-            snprintf(job->output, sizeof(job->output), "upload: popen failed");
-            job->exit_code = -1;
-            unlink(script);
-            goto cleanup;
-        }
-        n = fread(job->output, 1, sizeof(job->output) - 1, fp);
-        job->output[n] = '\0';
-        job->exit_code = WEXITSTATUS(pclose(fp));
+        job->exit_code = ssh_run_with_hostkey_retry(job->target_ip, script,
+                              job->output, sizeof(job->output));
         unlink(script);
-
-        /* Retry once if host key mismatch */
-        if (job->exit_code != 0 &&
-            strstr(job->output, "Host key verification failed")) {
-            char kc[128];
-            snprintf(kc, sizeof(kc),
-                "ssh-keygen -R '%s' >/dev/null 2>&1", job->target_ip);
-            system(kc);
-
-            fp = fopen(script, "w");
-            if (fp) {
-                fprintf(fp,
-                    "#!/bin/sh\n"
-                    "tar -C '%s' -cf - . | \\\n"
-                    "sshpass -p luckfox ssh \\\n"
-                    "  -o StrictHostKeyChecking=no \\\n"
-                    "  -o ConnectTimeout=30 \\\n"
-                    "  root@%s \\\n"
-                    "  \"mkdir -p '%s' && tar -C '%s' -xf - 2>&1\"\n",
-                    tmpdir, job->target_ip, job->target_dir, job->target_dir);
-                fclose(fp);
-                snprintf(cmd, sizeof(cmd), "chmod +x '%s'", script);
-                system(cmd);
-                fp = popen(script, "r");
-                if (fp) {
-                    n = fread(job->output, 1, sizeof(job->output) - 1, fp);
-                    job->output[n] = '\0';
-                    job->exit_code = WEXITSTATUS(pclose(fp));
-                }
-                unlink(script);
-            }
-        }
     }
 
 cleanup:
@@ -1199,6 +1191,17 @@ static void ssh_exec(int fd, const char *ip, const char *shellcmd)
     char out[512] = {0};
     int rc = 0;
     if (fp) { fread(out, 1, sizeof(out) - 1, fp); rc = WEXITSTATUS(pclose(fp)); }
+
+    if (rc != 0 && strstr(out, "REMOTE HOST IDENTIFICATION HAS CHANGED")) {
+        char kc[160];
+        snprintf(kc, sizeof(kc), "ssh-keygen -R '%s' >/dev/null 2>&1", ip);
+        system(kc);
+
+        memset(out, 0, sizeof(out));
+        fp = popen(cmd, "r");
+        if (fp) { fread(out, 1, sizeof(out) - 1, fp); rc = WEXITSTATUS(pclose(fp)); }
+    }
+
     if (rc != 0) {
         wstr(fd, "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n"
                  "Connection: close\r\n\r\n{\"error\":");
@@ -1220,13 +1223,28 @@ static void route_api_mkdir(int fd, const char *req)
     char ip[64] = {0}, path[512] = {0};
     json_str_val(body, "ip",   ip,   sizeof(ip));
     json_str_val(body, "path", path, sizeof(path));
-    if (!valid_ip(ip) || !valid_path(path)) {
+    int is_local = (strcmp(ip, "LOCAL") == 0);
+    if ((!is_local && !valid_ip(ip)) || !valid_path(path)) {
         wstr(fd, "HTTP/1.0 400 Bad Request\r\nContent-Type: application/json\r\n"
                  "Connection: close\r\n\r\n{\"error\":\"invalid ip or path\"}\n"); return;
     }
     char sc[640];
     snprintf(sc, sizeof(sc), "mkdir -p \"%s\"", path);
-    ssh_exec(fd, ip, sc);
+    if (is_local) {
+        FILE *fp = popen(sc, "r");
+        char out[256] = {0};
+        int rc = 0;
+        if (fp) { fread(out, 1, sizeof(out)-1, fp); rc = WEXITSTATUS(pclose(fp)); }
+        if (rc != 0) {
+            wstr(fd, "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"error\":");
+            json_str(fd, out[0] ? out : "mkdir failed");
+            wstr(fd, "}\n");
+        } else {
+            wstr(fd, "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"ok\":true}\n");
+        }
+    } else {
+        ssh_exec(fd, ip, sc);
+    }
 }
 
 /* POST /api/rm  body: ip=...&path=... */
@@ -1239,13 +1257,28 @@ static void route_api_rm(int fd, const char *req)
     char ip[64] = {0}, path[512] = {0};
     json_str_val(body, "ip",   ip,   sizeof(ip));
     json_str_val(body, "path", path, sizeof(path));
-    if (!valid_ip(ip) || !valid_path(path) || strlen(path) < 4) {
+    int is_local = (strcmp(ip, "LOCAL") == 0);
+    if ((!is_local && !valid_ip(ip)) || !valid_path(path) || strlen(path) < 4) {
         wstr(fd, "HTTP/1.0 400 Bad Request\r\nContent-Type: application/json\r\n"
                  "Connection: close\r\n\r\n{\"error\":\"invalid ip or path\"}\n"); return;
     }
     char sc[640];
     snprintf(sc, sizeof(sc), "rm -rf \"%s\"", path);
-    ssh_exec(fd, ip, sc);
+    if (is_local) {
+        FILE *fp = popen(sc, "r");
+        char out[256] = {0};
+        int rc = 0;
+        if (fp) { fread(out, 1, sizeof(out)-1, fp); rc = WEXITSTATUS(pclose(fp)); }
+        if (rc != 0) {
+            wstr(fd, "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"error\":");
+            json_str(fd, out[0] ? out : "rm failed");
+            wstr(fd, "}\n");
+        } else {
+            wstr(fd, "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"ok\":true}\n");
+        }
+    } else {
+        ssh_exec(fd, ip, sc);
+    }
 }
 
 /* POST /api/rename  body: ip=...&from=...&to=... */
@@ -1259,13 +1292,28 @@ static void route_api_rename(int fd, const char *req)
     json_str_val(body, "ip",      ip,   sizeof(ip));
     json_str_val(body, "path",    from, sizeof(from));
     json_str_val(body, "newpath", to,   sizeof(to));
-    if (!valid_ip(ip) || !valid_path(from) || !valid_path(to)) {
+    int is_local = (strcmp(ip, "LOCAL") == 0);
+    if ((!is_local && !valid_ip(ip)) || !valid_path(from) || !valid_path(to)) {
         wstr(fd, "HTTP/1.0 400 Bad Request\r\nContent-Type: application/json\r\n"
                  "Connection: close\r\n\r\n{\"error\":\"invalid ip or path\"}\n"); return;
     }
     char sc[1100];
     snprintf(sc, sizeof(sc), "mv \"%s\" \"%s\"", from, to);
-    ssh_exec(fd, ip, sc);
+    if (is_local) {
+        FILE *fp = popen(sc, "r");
+        char out[256] = {0};
+        int rc = 0;
+        if (fp) { fread(out, 1, sizeof(out)-1, fp); rc = WEXITSTATUS(pclose(fp)); }
+        if (rc != 0) {
+            wstr(fd, "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"error\":");
+            json_str(fd, out[0] ? out : "rename failed");
+            wstr(fd, "}\n");
+        } else {
+            wstr(fd, "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"ok\":true}\n");
+        }
+    } else {
+        ssh_exec(fd, ip, sc);
+    }
 }
 
 /* POST /api/chmod  body: {"ip":"...","paths":[...],"mode":"0755","recursive":false} */
@@ -1456,6 +1504,30 @@ static void route_api_ssh_exec(int fd, const char *req)
         stderr_buf[n] = '\0';
         fclose(ef);
         unlink(stderr_path);
+    }
+
+    if (exit_code != 0 && !is_local &&
+        strstr(stderr_buf, "REMOTE HOST IDENTIFICATION HAS CHANGED")) {
+        char kc[160];
+        snprintf(kc, sizeof(kc), "ssh-keygen -R '%s' >/dev/null 2>&1", ip);
+        system(kc);
+
+        memset(stdout_buf, 0, sizeof(stdout_buf));
+        memset(stderr_buf, 0, sizeof(stderr_buf));
+
+        fp = popen(full_cmd, "r");
+        if (fp) {
+            size_t n2 = fread(stdout_buf, 1, sizeof(stdout_buf) - 1, fp);
+            stdout_buf[n2] = '\0';
+            exit_code = WEXITSTATUS(pclose(fp));
+        }
+        ef = fopen(stderr_path, "r");
+        if (ef) {
+            size_t n2 = fread(stderr_buf, 1, sizeof(stderr_buf) - 1, ef);
+            stderr_buf[n2] = '\0';
+            fclose(ef);
+            unlink(stderr_path);
+        }
     }
 
     clock_gettime(CLOCK_MONOTONIC, &t1);
@@ -1662,10 +1734,29 @@ static void route_regen(int fd)
     do_scan();
     printf("  [web] Found %d host(s)\n", g_result.count);
 
+    int dev_count = 0;
+    for (int i = 0; i < g_result.count; i++) {
+        const Host *h = &g_result.hosts[i];
+        if (strstr(h->comment, "Line") && strstr(h->comment, "[GM")) dev_count++;
+    }
+
+    if (dev_count == 0 && g_last_good_dev_count > 0) {
+        printf("  [web] /regen: scan found 0 matching devices (previously %d) — keeping previous nginx config\n",
+               g_last_good_dev_count);
+        wstr(fd,
+             "HTTP/1.0 200 OK\r\n"
+             "Content-Type: application/json\r\n"
+             "Connection: close\r\n"
+             "\r\n"
+             "{\"warning\":\"scan found 0 matching devices, previous config kept\"}\n");
+        return;
+    }
+
     write_nginx_proxy_conf();
     write_landing_page();
     system("nginx -t && nginx -s reload");
     printf("  [web] nginx reloaded\n");
+    g_last_good_dev_count = dev_count;
 
     wstr(fd,
          "HTTP/1.0 200 OK\r\n"
@@ -1677,6 +1768,30 @@ static void route_regen(int fd)
 
 /* ── Public entry point ──────────────────────────────────────────────────── */
 
+/* Seed g_last_good_dev_count from the existing nginx proxy conf on startup.
+ * Without this, the regen guard (route_regen()) has no baseline right after
+ * a process restart — its first scan would overwrite an already-good
+ * config if that scan happens to find 0 matching devices (e.g. comments
+ * not yet loaded), exactly reproducing the bug this guard exists to
+ * prevent. Each device block write_nginx_proxy_conf() writes starts with
+ * a literal "server {" line, so counting those is a safe, file-format
+ * -matched way to recover the last known good count without a separate
+ * state file. */
+static void seed_last_good_dev_count(void)
+{
+    FILE *f = fopen("/etc/nginx/conf.d/ipscan-proxy.conf", "r");
+    if (!f) return;
+    char line[256];
+    int count = 0;
+    while (fgets(line, sizeof(line), f)) {
+        if (strstr(line, "server {")) count++;
+    }
+    fclose(f);
+    g_last_good_dev_count = count;
+    if (count > 0)
+        printf("  [web] seeded g_last_good_dev_count=%d from existing nginx proxy conf\n", count);
+}
+
 void web_serve(const char *iface, const char *comments_file,
                const char *ssh_user, int port)
 {
@@ -1685,6 +1800,7 @@ void web_serve(const char *iface, const char *comments_file,
     strncpy(g_iface,         iface,         sizeof(g_iface) - 1);
     strncpy(g_comments_file, comments_file, sizeof(g_comments_file) - 1);
     mqttmap_path_from_comments(comments_file, g_mqttmap_file, sizeof(g_mqttmap_file));
+    seed_last_good_dev_count();
 
     printf("  [web] Scanning %s ...\n", iface);
     fflush(stdout);
