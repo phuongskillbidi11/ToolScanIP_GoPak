@@ -258,15 +258,32 @@ echo "  Landing page nginx block updated."
 # ── 5. Start ipscanner web daemon (internal port, nginx proxies it) ───────────
 echo "[5/5] Starting ipscanner web daemon ..."
 
-# Kill any existing ipscanner web process
-pkill -f "ipscanner.*-w" 2>/dev/null && echo "  Stopped old ipscanner daemon."
-sleep 1
+# Detect systemd management — a manual pkill+nohup here races systemd's own
+# Restart= policy for the same unit and port, causing a restart-crash-loop
+# (see .plans/2026-09-11-gen-nginx-systemd-conflict-fix/spec.md).
+IS_SYSTEMD_MANAGED=0
+if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+    if systemctl is-enabled ipscanner >/dev/null 2>&1 || systemctl is-active ipscanner >/dev/null 2>&1; then
+        IS_SYSTEMD_MANAGED=1
+    fi
+fi
 
-# Start ipscanner on internal port in background
-nohup "$SCANNER" -i "$IFACE" -w "$SCANNER_INTERNAL_PORT" \
-    > /tmp/ipscanner-web.log 2>&1 &
-echo "  ipscanner started on internal port $SCANNER_INTERNAL_PORT (PID $!)"
-echo "  Log: /tmp/ipscanner-web.log"
+if [ "$IS_SYSTEMD_MANAGED" = "1" ]; then
+    echo "  ipscanner is managed by systemd — restarting via systemctl."
+    systemctl restart ipscanner
+    sleep 1
+    echo "  ipscanner.service restarted (internal port $SCANNER_INTERNAL_PORT)."
+else
+    # Kill any existing ipscanner web process
+    pkill -f "ipscanner.*-w" 2>/dev/null && echo "  Stopped old ipscanner daemon."
+    sleep 1
+
+    # Start ipscanner on internal port in background
+    nohup "$SCANNER" -i "$IFACE" -w "$SCANNER_INTERNAL_PORT" \
+        > /tmp/ipscanner-web.log 2>&1 &
+    echo "  ipscanner started on internal port $SCANNER_INTERNAL_PORT (PID $!)"
+    echo "  Log: /tmp/ipscanner-web.log"
+fi
 
 # Write nginx proxy block for scanner UI
 cat > "$NGINX_SCANNER" << EOF
