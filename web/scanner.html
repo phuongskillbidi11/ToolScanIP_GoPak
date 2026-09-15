@@ -788,10 +788,9 @@ tbody tr.selected { background: #eff6ff; }
   border: 1px solid #e5e7eb;
   border-radius: 6px;
   overflow: hidden;
-  max-height: 0;
-  transition: max-height 0.18s ease-out;
+  display: none;
 }
-.target-browser.open { max-height: 620px; }
+.target-browser.open { display: block; }
 
 .target-browser-bar {
   background: #f9fafb;
@@ -813,7 +812,7 @@ tbody tr.selected { background: #eff6ff; }
 }
 .target-browser-bar a:hover { text-decoration: underline; }
 
-.target-file-list { max-height: 420px; overflow-y: auto; }
+.target-file-list { max-height: 300px; overflow-y: auto; }
 .target-file-row.selected { background: #eff6ff; }
 .target-file-row input[type="checkbox"] { width: 14px; height: 14px; cursor: pointer; flex-shrink: 0; accent-color: #2563eb; }
 .target-actions-bar {
@@ -990,7 +989,7 @@ tbody tr.selected { background: #eff6ff; }
   font-size: 13px;
 }
 
-.target-list { height: 520px; overflow-y: auto; }
+.target-list { max-height: 300px; overflow-y: auto; }
 
 .target-row {
   display: flex;
@@ -1606,7 +1605,7 @@ tbody tr.selected { background: #eff6ff; }
     <div class="nav-item" id="nav-service-logs" title="Service Logs"
          onclick="navClick('service-logs')">
       <i class="fa-solid fa-scroll"></i>
-      <span class="nav-label">Service Logs</span>
+      <span class="nav-text">Service Logs</span>
       <i class="fa-solid fa-thumbtack pin-icon" id="pin-service-logs"
          onclick="pinClick(event,'service-logs')" title="Pin panel"></i>
     </div>
