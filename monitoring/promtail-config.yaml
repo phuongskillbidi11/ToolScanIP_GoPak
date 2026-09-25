@@ -1,0 +1,24 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /var/lib/node-log-collector/promtail-positions.yaml
+
+clients:
+  - url: http://100.82.22.47:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: luckfox-node-oee
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: node-oee
+          __path__: /var/lib/node-log-collector/logs/*.log
+    pipeline_stages:
+      - regex:
+          source: filename
+          expression: '/(?P<node_ip>[^/]+)\.log$'
+      - labels:
+          node_ip:

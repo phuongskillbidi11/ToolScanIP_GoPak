@@ -209,8 +209,8 @@ GLIBC on boards: 2.31 (Pi & Orange Pi). Link pthread statically for aarch64.
 > **Update this section at the end of every sprint.**
 > Claude Code reads this before writing any plan.
 
-**Last updated:** 2026-09-15
-**Completed sprints:** Sprint 2 — SSH Terminal card (2026-05-23) | Sprint 3 — Multi-IP tabbed SSH Terminal (2026-05-23) | Multi SCP / Web Reliability Bugfixes (2026-09-11, `.plans/2026-09-10-multi-scp-reliability-fixes/`) | Service Logs Panel (2026-09-11, `.plans/2026-09-11-service-logs-continuation/` — continuation/recovery of the never-fully-landed `.plans/2026-06-01-sprint-service-logs/`) | gen-nginx.sh systemd-conflict fix (2026-09-15, `.plans/2026-09-11-gen-nginx-systemd-conflict-fix/`)
+**Last updated:** 2026-09-25
+**Completed sprints:** Sprint 2 — SSH Terminal card (2026-05-23) | Sprint 3 — Multi-IP tabbed SSH Terminal (2026-05-23) | Multi SCP / Web Reliability Bugfixes (2026-09-11, `.plans/2026-09-10-multi-scp-reliability-fixes/`) | Service Logs Panel (2026-09-11, `.plans/2026-09-11-service-logs-continuation/` — continuation/recovery of the never-fully-landed `.plans/2026-06-01-sprint-service-logs/`) | gen-nginx.sh systemd-conflict fix (2026-09-15, `.plans/2026-09-11-gen-nginx-systemd-conflict-fix/`) | Regenerate stale web/scanner.html (2026-09-15, `.plans/2026-09-15-fix-stale-scanner-html/`) | Centralized log collection for the Luckfox fleet (2026-09-25, `.plans/2026-09-25-centralized-log-collection/`)
 
 ### What exists
 - [x] ARP scanner with OUI lookup, SSH/HTTP probing (`src/arp.c`, `src/probe.c`)
@@ -232,6 +232,7 @@ GLIBC on boards: 2.31 (Pi & Orange Pi). Link pthread statically for aarch64.
 - [x] Checkbox on directory rows in the Multi SCP target file browser (`renderTargetBrowserFiles()`), with a click-target guard so it doesn't also trigger folder navigation
 - [x] Service Logs sidebar panel — live `journalctl -u ipscanner` tail (with `is-active` status + `NRestarts` count) via `GET /api/service-logs` (`route_api_service_logs()` in `src/web.c`), rendered with per-line error/warn/info coloring, 10s auto-refresh while pinned (`web/src/assets/js/service-logs.js`, `web/src/assets/css/service-logs.css`)
 - [x] `scripts/gen-nginx.sh` auto-detects whether `ipscanner` is a systemd-managed unit before restarting it — `systemctl restart ipscanner` when it is, the original manual `pkill`+`nohup` only when it isn't — instead of always doing the manual restart regardless
+- [x] **Centralized log collection for the Luckfox node fleet** (separate from `ipscanner` itself — new fleet-operations tooling, not an app feature): `scripts/collect-node-logs.sh` runs on Pi 1, pulls new `/var/log/isoft-node-oee.log` lines from every currently-scanned node (via `ipscanner`'s own `/api/scan`, same `'Line'+'[GM'` filter as `gen-nginx.sh`) over SSH, with per-node offset tracking, host-key-mismatch auto-retry, and pruning of local files for IPs that drop out of the current scan. Promtail (on Pi 1) tails the collected local files and ships them to Loki (on a separate RK3568 board, `100.82.22.47`, data under `/userdata/loki`), viewable via Grafana (same board, port 3000). Nothing installed on the Luckfox nodes themselves. See `.plans/2026-09-25-centralized-log-collection/` for full design/decisions.
 
 ### Known issues / tech debt
 - `web/src/assets/js/scp.js` is ~1380 lines — largest JS file, candidate for future split
@@ -243,6 +244,11 @@ GLIBC on boards: 2.31 (Pi & Orange Pi). Link pthread statically for aarch64.
 - Log-level detection (error/warn/info by substring match) is duplicated between `write_landing_page()`'s mini preview and `route_api_service_logs()` in `src/web.c` — pre-existing in the recovered 2026-06-01 code, not de-duplicated (out of scope for the recovery sprint)
 - The `aarch64-linux-gnu-gcc` cross-compile toolchain is not installed in this WSL2 dev environment — `make aarch64`/Orange Pi build could not be verified in the 2026-09-11 Service Logs sprint (native + armhf both verified clean)
 - Pi 1 was previously (wrongly) assumed to run `ipscanner` manually, not under systemd. Confirmed live on 2026-09-11 that Pi 1 actually runs `ipscanner.service` under systemd — this caused a real restart-crash-loop production incident when `gen-nginx.sh`'s old unconditional `pkill`+`nohup` raced systemd's own `Restart=` policy (fixed 2026-09-15, see `.plans/2026-09-11-gen-nginx-systemd-conflict-fix/`). Don't assume any board's systemd status — check with `systemctl status ipscanner` before writing deploy/restart logic that touches the process
+- **`uname -m` alone does not tell you which binaries will run on a board.** Pi 1's kernel reports `aarch64` (`uname -m`), but its actual userspace is 32-bit armhf (`dpkg --print-architecture` → `armhf`; only `/lib/ld-linux-armhf.so.3` exists, not the aarch64 interpreter) — a 64-bit-capable kernel with 32-bit userspace is a valid, real Raspberry Pi OS configuration. Discovered 2026-09-25 installing Promtail (a 64-bit arm64 binary failed with "required file not found" before this was caught). Always check `dpkg --print-architecture` (or which `/lib/ld-linux-*.so*` exists) before assuming a board's binary-compatible architecture from `uname -m`
+- The Luckfox node fleet does **not** all share one root password — confirmed 2026-09-25 when only 13 of 19 reachable nodes accepted the password used earlier in that session; don't assume a single shared fleet-wide credential without checking
+- The RK3568 monitoring board (`100.82.22.47`)'s root partition (`/`) is tight (~1.2GB free of 5.9GB) — installing anything there via a standard `.deb`/`.rpm` package (which hard-codes root-partition install paths) risks filling it completely (happened installing Grafana 2026-09-25, recovered via `dpkg --purge` + cleanup). Prefer the standalone/tarball form of anything installed there, extracted under `/userdata/` (which has ~19GB free), matching how Loki/Grafana are both actually installed
+- Grafana on the RK3568 board (`100.82.22.47:3000`) is still running its **default `admin`/`admin` credentials** — the operator saw Grafana's own security warning and explicitly chose to keep them for now (2026-09-25). Revisit before this board's network exposure changes beyond Tailscale-only
+- Promtail is no longer published in current Loki GitHub releases (Grafana is migrating toward Grafana Alloy) — the last release confirmed to still ship a `promtail-linux-arm*.zip` asset is **v3.6.5**; that's what's installed on Pi 1, even though the Loki *server* itself is newer (v3.7.8) — the push API between them is stable across this gap
 
 ### Decisions made (summary)
 _See `.plans/*/DECISION_LOG.md` for full reasoning_
@@ -267,6 +273,10 @@ _See `.plans/*/DECISION_LOG.md` for full reasoning_
 | Service Logs source | `journalctl -u ipscanner`, parsed server-side into JSON | Reading a raw log file directly | Service Logs (2026-06-01 design, landed 2026-09-11) |
 | Service Logs scope (continuation) | Pi 1/local verification only; Pi 2 + Orange Pi deploy/smoke-test deferred | Deploying to all boards before calling the sprint done | Service Logs (2026-09-11) |
 | systemd-conflict restart fix | Auto-detect via `systemctl is-enabled`/`is-active` + `/run/systemd/system`, branch to `systemctl restart` | Always assume systemd; always assume manual | gen-nginx.sh fix (2026-09-15) |
+| Log collection topology | Pi 1 pulls via SSH (no agent on nodes) → Promtail → Loki+Grafana on a separate RK3568 board | Agent installed on each 87MB-RAM node; Grafana Cloud (data leaves network); Windows mini PC (too little free RAM) | Log collection (2026-09-25) |
+| Log collection node list | Reuse `ipscanner`'s own `/api/scan` + `gen-nginx.sh`'s comment filter | Separately maintained static IP list | Log collection (2026-09-25) |
+| SSH key distribution to fleet | Split into its own separate plan | Bundled into the log-collection plan | Log collection (2026-09-25) |
+| Monitoring-board install method | Standalone tarball under `/userdata/` | Standard `.deb`/`.rpm` (fills the board's tight root partition) | Log collection (2026-09-25) |
 
 ### What NOT to regenerate
 - `web/scanner.html` — generated by `web/build.py`, do not edit directly
