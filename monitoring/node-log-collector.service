@@ -1,0 +1,10 @@
+[Unit]
+Description=Pull new Luckfox node logs for Promtail (collect-node-logs.sh)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+TimeoutStartSec=5min
+ExecStart=/bin/bash /usr/local/sbin/collect-node-logs.sh

@@ -1,0 +1,10 @@
+[Unit]
+Description=Run node-log-collector.service every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+Unit=node-log-collector.service
+
+[Install]
+WantedBy=timers.target

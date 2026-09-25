@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SCAN_URL="http://127.0.0.1:8181/api/scan"
+SCAN_URL="${SCAN_URL:-http://127.0.0.1:8181/api/scan}"
 REMOTE_LOG="/var/log/isoft-node-oee.log"
 BASE_DIR="/var/lib/node-log-collector"
 STATE_DIR="$BASE_DIR/state"
@@ -94,7 +94,7 @@ while IFS= read -r ip; do
     : > "$transfer_tmp"
     ssh_ok=1
     for attempt in 1 2; do
-        if ssh -o ConnectTimeout=10 "root@$ip" sh -s -- "$offset" "$REMOTE_LOG" \
+        if ssh -i /root/.ssh/id_ed25519_fleet -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o ConnectTimeout=10 "root@$ip" sh -s -- "$offset" "$REMOTE_LOG" \
             > "$transfer_tmp" 2> "$ssh_err_tmp" <<'REMOTE'
 offset=$1
 remote_log=$2
@@ -169,24 +169,33 @@ REMOTE
 done < "$current_ips_tmp"
 
 # Prune orphan state/log pairs for IPs that are not in the current scan.
-{
-    for path in "$STATE_DIR"/*.offset; do
-        [ -e "$path" ] || continue
-        name=${path##*/}
-        printf '%s\n' "${name%.offset}"
-    done
-    for path in "$LOG_DIR"/*.log; do
-        [ -e "$path" ] || continue
-        name=${path##*/}
-        printf '%s\n' "${name%.log}"
-    done
-} | sort -u | while IFS= read -r local_ip; do
-    [ -n "$local_ip" ] || continue
-    if ! grep -Fqx -- "$local_ip" "$current_ips_tmp"; then
-        echo "Pruning orphan files for $local_ip (not in current scan)" >&2
+# Scans drop nodes intermittently on this fleet, and this runs every minute,
+# so only prune after 24h without a successful collection (the .offset is
+# rewritten on every one), and never on an empty scan.
+if [ ! -s "$current_ips_tmp" ]; then
+    echo "Scan returned 0 nodes; skipping orphan pruning" >&2
+else
+    {
+        for path in "$STATE_DIR"/*.offset; do
+            [ -e "$path" ] || continue
+            name=${path##*/}
+            printf '%s\n' "${name%.offset}"
+        done
+        for path in "$LOG_DIR"/*.log; do
+            [ -e "$path" ] || continue
+            name=${path##*/}
+            printf '%s\n' "${name%.log}"
+        done
+    } | sort -u | while IFS= read -r local_ip; do
+        [ -n "$local_ip" ] || continue
+        grep -Fqx -- "$local_ip" "$current_ips_tmp" && continue
+        last_seen="$STATE_DIR/$local_ip.offset"
+        [ -e "$last_seen" ] || last_seen="$LOG_DIR/$local_ip.log"
+        [ -n "$(find "$last_seen" -mmin +1440)" ] || continue
+        echo "Pruning orphan files for $local_ip (not in current scan, stale >24h)" >&2
         rm -f -- "$STATE_DIR/$local_ip.offset" "$LOG_DIR/$local_ip.log"
-    fi
-done
+    done
+fi
 
 # Trim local log files Promtail has fully shipped to Loki — Pi 1 is a
 # relay, not a store; Loki (on the monitoring board) is the single place
