@@ -1,0 +1,1153 @@
+{
+  "uid": "luckfox-fleet",
+  "title": "Luckfox Fleet",
+  "tags": [
+    "luckfox",
+    "node-oee"
+  ],
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "version": 1,
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "refresh": "1m",
+  "description": "Luckfox node fleet, parsed from isoft-node-oee logs in Loki (collected by Pi 1 every minute). Source: ToolScanIP monitoring/grafana-dashboard-luckfox-fleet.json",
+  "templating": {
+    "list": [
+      {
+        "name": "fleet",
+        "label": "Fleet",
+        "type": "custom",
+        "hide": 2,
+        "multi": true,
+        "includeAll": false,
+        "query": "192.168.20.101,192.168.20.102,192.168.20.103,192.168.20.104,192.168.20.105,192.168.20.106,192.168.20.107,192.168.20.108,192.168.20.109,192.168.20.111,192.168.20.112,192.168.20.114,192.168.20.115,192.168.20.116,192.168.20.117,192.168.20.118,192.168.20.119,192.168.20.121,192.168.20.122,192.168.20.131",
+        "options": [
+          {
+            "text": "192.168.20.101",
+            "value": "192.168.20.101",
+            "selected": true
+          },
+          {
+            "text": "192.168.20.102",
+            "value": "192.168.20.102",
+            "selected": true
+          },
+          {
+            "text": "192.168.20.103",
+            "value": "192.168.20.103",
+            "selected": true
+          },
+          {
+            "text": "192.168.20.104",
+            "value": "192.168.20.104",
+            "selected": true
+          },
+          {
+            "text": "192.168.20.105",
+            "value": "192.168.20.105",
+            "selected": true
+          },
+          {
+            "text": "192.168.20.106",
+            "value": "192.168.20.106",
+            "selected": true
+          },
+          {
+            "text": "192.168.20.107",
+            "value": "192.168.20.107",
+            "selected": true
+          },
+          {
+            "text": "192.168.20.108",
+            "value": "192.168.20.108",
+            "selected": true
+          },
+          {
+            "text": "192.168.20.109",
+            "value": "192.168.20.109",
+            "selected": true
+          },
+          {
+            "text": "192.168.20.111",
+            "value": "192.168.20.111",
+            "selected": true
+          },
+          {
+            "text": "192.168.20.112",
+            "value": "192.168.20.112",
+            "selected": true
+          },
+          {
+            "text": "192.168.20.114",
+            "value": "192.168.20.114",
+            "selected": true
+          },
+          {
+            "text": "192.168.20.115",
+            "value": "192.168.20.115",
+            "selected": true
+          },
+          {
+            "text": "192.168.20.116",
+            "value": "192.168.20.116",
+            "selected": true
+          },
+          {
+            "text": "192.168.20.117",
+            "value": "192.168.20.117",
+            "selected": true
+          },
+          {
+            "text": "192.168.20.118",
+            "value": "192.168.20.118",
+            "selected": true
+          },
+          {
+            "text": "192.168.20.119",
+            "value": "192.168.20.119",
+            "selected": true
+          },
+          {
+            "text": "192.168.20.121",
+            "value": "192.168.20.121",
+            "selected": true
+          },
+          {
+            "text": "192.168.20.122",
+            "value": "192.168.20.122",
+            "selected": true
+          },
+          {
+            "text": "192.168.20.131",
+            "value": "192.168.20.131",
+            "selected": true
+          }
+        ],
+        "current": {
+          "text": [
+            "192.168.20.101",
+            "192.168.20.102",
+            "192.168.20.103",
+            "192.168.20.104",
+            "192.168.20.105",
+            "192.168.20.106",
+            "192.168.20.107",
+            "192.168.20.108",
+            "192.168.20.109",
+            "192.168.20.111",
+            "192.168.20.112",
+            "192.168.20.114",
+            "192.168.20.115",
+            "192.168.20.116",
+            "192.168.20.117",
+            "192.168.20.118",
+            "192.168.20.119",
+            "192.168.20.121",
+            "192.168.20.122",
+            "192.168.20.131"
+          ],
+          "value": [
+            "192.168.20.101",
+            "192.168.20.102",
+            "192.168.20.103",
+            "192.168.20.104",
+            "192.168.20.105",
+            "192.168.20.106",
+            "192.168.20.107",
+            "192.168.20.108",
+            "192.168.20.109",
+            "192.168.20.111",
+            "192.168.20.112",
+            "192.168.20.114",
+            "192.168.20.115",
+            "192.168.20.116",
+            "192.168.20.117",
+            "192.168.20.118",
+            "192.168.20.119",
+            "192.168.20.121",
+            "192.168.20.122",
+            "192.168.20.131"
+          ]
+        }
+      },
+      {
+        "name": "node",
+        "label": "Node",
+        "type": "query",
+        "datasource": {
+          "type": "loki",
+          "uid": "efzaru4stjbwgc"
+        },
+        "query": {
+          "label": "node_ip",
+          "refId": "LokiVariableQueryEditor-VariableQuery",
+          "stream": "{job=\"node-oee\"}",
+          "type": 1
+        },
+        "definition": "label_values({job=\"node-oee\"}, node_ip)",
+        "refresh": 2,
+        "sort": 3,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".+",
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": []
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Status",
+      "id": 2,
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Node status",
+      "id": 3,
+      "datasource": {
+        "type": "loki",
+        "uid": "efzaru4stjbwgc"
+      },
+      "repeat": "fleet",
+      "repeatDirection": "h",
+      "maxPerRow": 10,
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "efzaru4stjbwgc"
+          },
+          "expr": "sum(count_over_time({job=\"node-oee\", node_ip=\"${fleet:raw}\"}[3m])) or vector(0)",
+          "queryType": "instant",
+          "refId": "A",
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "displayName": "${fleet}",
+          "unit": "none",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "SILENT",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "orientation": "auto"
+      },
+      "description": "Log lines received from this node in the last 3 minutes. SILENT = nothing received (node down, collector cannot reach it, or its log is not growing).",
+      "gridPos": {
+        "h": 3,
+        "w": 24,
+        "x": 0,
+        "y": 1
+      }
+    },
+    {
+      "type": "row",
+      "title": "Health",
+      "id": 4,
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 7
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "RAM free (MB)",
+      "id": 5,
+      "datasource": {
+        "type": "loki",
+        "uid": "efzaru4stjbwgc"
+      },
+      "interval": "1m",
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "efzaru4stjbwgc"
+          },
+          "expr": "last_over_time({job=\"node-oee\", node_ip=~`${node:regex}`} |= \"RAM: total\" | regexp `free (?P<v>[0-9]+) MB` | unwrap v | __error__=\"\" [$__interval]) by (node_ip)",
+          "queryType": "range",
+          "refId": "A",
+          "editorMode": "code",
+          "legendFormat": "{{node_ip}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 5,
+            "spanNulls": 180000,
+            "showPoints": "never",
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "unit": "suffix: MB",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 10
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU %",
+      "id": 6,
+      "datasource": {
+        "type": "loki",
+        "uid": "efzaru4stjbwgc"
+      },
+      "interval": "1m",
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "efzaru4stjbwgc"
+          },
+          "expr": "last_over_time({job=\"node-oee\", node_ip=~`${node:regex}`} |= \"CPU Usage:\" | regexp `CPU Usage: (?P<v>[0-9.]+)%` | unwrap v | __error__=\"\" [$__interval]) by (node_ip)",
+          "queryType": "range",
+          "refId": "A",
+          "editorMode": "code",
+          "legendFormat": "{{node_ip}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 5,
+            "spanNulls": 180000,
+            "showPoints": "never"
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Storage free (MB)",
+      "id": 7,
+      "datasource": {
+        "type": "loki",
+        "uid": "efzaru4stjbwgc"
+      },
+      "interval": "1m",
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "efzaru4stjbwgc"
+          },
+          "expr": "last_over_time({job=\"node-oee\", node_ip=~`${node:regex}`} |= \"Storage (/)\" | regexp `free (?P<v>[0-9.]+) MB` | unwrap v | __error__=\"\" [$__interval]) by (node_ip)",
+          "queryType": "range",
+          "refId": "A",
+          "editorMode": "code",
+          "legendFormat": "{{node_ip}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 5,
+            "spanNulls": 180000,
+            "showPoints": "never"
+          },
+          "unit": "suffix: MB"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 8
+      }
+    },
+    {
+      "type": "row",
+      "title": "Machine",
+      "id": 8,
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      }
+    },
+    {
+      "type": "state-timeline",
+      "title": "Status Machine / Run-Stop",
+      "id": 9,
+      "datasource": {
+        "type": "loki",
+        "uid": "efzaru4stjbwgc"
+      },
+      "interval": "1m",
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "efzaru4stjbwgc"
+          },
+          "expr": "last_over_time({job=\"node-oee\", node_ip=~`${node:regex}`} |~ `Status Machine: [0-9]+|Run/Stop: [0-9]+` | regexp `(Status Machine|Run/Stop): (?P<v>[0-9]+)` | unwrap v | __error__=\"\" [$__interval]) by (node_ip)",
+          "queryType": "range",
+          "refId": "A",
+          "editorMode": "code",
+          "legendFormat": "{{node_ip}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "showValue": "auto",
+        "mergeValues": true,
+        "rowHeight": 0.8,
+        "legend": {
+          "showLegend": false
+        }
+      },
+      "description": "Raw machine status value from the node log (Status Machine / Run-Stop). The meaning of the codes (1, 2, ...) is defined by the OEE app.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 17
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Speed",
+      "id": 10,
+      "datasource": {
+        "type": "loki",
+        "uid": "efzaru4stjbwgc"
+      },
+      "interval": "1m",
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "efzaru4stjbwgc"
+          },
+          "expr": "last_over_time({job=\"node-oee\", node_ip=~`${node:regex}`} |~ `Speed: [0-9]+` | regexp `Speed: (?P<v>[0-9]+)` | unwrap v | __error__=\"\" [$__interval]) by (node_ip)",
+          "queryType": "range",
+          "refId": "A",
+          "editorMode": "code",
+          "legendFormat": "{{node_ip}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 5,
+            "spanNulls": 180000,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 17
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Counter In / Out",
+      "id": 11,
+      "datasource": {
+        "type": "loki",
+        "uid": "efzaru4stjbwgc"
+      },
+      "interval": "1m",
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "efzaru4stjbwgc"
+          },
+          "expr": "last_over_time({job=\"node-oee\", node_ip=~`${node:regex}`} |~ `Counter ?In: [0-9]+` | regexp `Counter ?In: (?P<v>[0-9]+)` | unwrap v | __error__=\"\" [$__interval]) by (node_ip)",
+          "queryType": "range",
+          "refId": "A",
+          "editorMode": "code",
+          "legendFormat": "{{node_ip}} in"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "efzaru4stjbwgc"
+          },
+          "expr": "last_over_time({job=\"node-oee\", node_ip=~`${node:regex}`} |~ `Counter ?Out: [0-9]+` | regexp `Counter ?Out: (?P<v>[0-9]+)` | unwrap v | __error__=\"\" [$__interval]) by (node_ip)",
+          "queryType": "range",
+          "refId": "B",
+          "editorMode": "code",
+          "legendFormat": "{{node_ip}} out"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 5,
+            "spanNulls": 180000,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 17
+      }
+    },
+    {
+      "type": "row",
+      "title": "Production",
+      "id": 12,
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 25
+      }
+    },
+    {
+      "type": "table",
+      "title": "Staff Code (last 2 min)",
+      "id": 13,
+      "datasource": {
+        "type": "loki",
+        "uid": "efzaru4stjbwgc"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "efzaru4stjbwgc"
+          },
+          "expr": "sum by (node_ip, staff) (count_over_time({job=\"node-oee\", node_ip=~`${node:regex}`} |= \"Staff Code:\" | regexp `Staff Code: *(?P<staff>[^| ]*)` [2m]))",
+          "queryType": "instant",
+          "refId": "A",
+          "editorMode": "code"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {}
+        },
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true,
+              "Value #A": true
+            },
+            "renameByName": {
+              "node_ip": "Node",
+              "staff": "Staff Code"
+            },
+            "indexByName": {
+              "node_ip": 0,
+              "staff": 1
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "Node",
+            "desc": false
+          }
+        ]
+      },
+      "description": "Values seen in the node log during the last 2 minutes (blank = none assigned).",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 26
+      }
+    },
+    {
+      "type": "table",
+      "title": "Item Code (last 2 min)",
+      "id": 14,
+      "datasource": {
+        "type": "loki",
+        "uid": "efzaru4stjbwgc"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "efzaru4stjbwgc"
+          },
+          "expr": "sum by (node_ip, item) (count_over_time({job=\"node-oee\", node_ip=~`${node:regex}`} |= \"ItemCode:\" | regexp `ItemCode: *(?P<item>[^| ]*)` [2m]))",
+          "queryType": "instant",
+          "refId": "A",
+          "editorMode": "code"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {}
+        },
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true,
+              "Value #A": true
+            },
+            "renameByName": {
+              "node_ip": "Node",
+              "item": "Item Code"
+            },
+            "indexByName": {
+              "node_ip": 0,
+              "item": 1
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "Node",
+            "desc": false
+          }
+        ]
+      },
+      "description": "Values seen in the node log during the last 2 minutes (blank = none assigned).",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 26
+      }
+    },
+    {
+      "type": "row",
+      "title": "MQTT",
+      "id": 15,
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 34
+      }
+    },
+    {
+      "type": "bargauge",
+      "title": "MQTT healthy checks (5 min)",
+      "id": 16,
+      "datasource": {
+        "type": "loki",
+        "uid": "efzaru4stjbwgc"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "efzaru4stjbwgc"
+          },
+          "expr": "sum by (node_ip) (count_over_time({job=\"node-oee\", node_ip=~`${node:regex}`} |= \"MQTT\" |= \"healthy\" [5m]))",
+          "queryType": "instant",
+          "refId": "A",
+          "editorMode": "code",
+          "legendFormat": "{{node_ip}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "displayName": "${__data.fields.node_ip}",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {}
+        },
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "node_ip"
+              }
+            ]
+          }
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [],
+          "fields": "",
+          "values": true
+        },
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "showUnfilled": true,
+        "namePlacement": "left",
+        "sizing": "manual",
+        "minVizHeight": 16,
+        "maxVizHeight": 28,
+        "valueMode": "color"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 35
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "MQTT error rate %",
+      "id": 17,
+      "datasource": {
+        "type": "loki",
+        "uid": "efzaru4stjbwgc"
+      },
+      "interval": "1m",
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "efzaru4stjbwgc"
+          },
+          "expr": "last_over_time({job=\"node-oee\", node_ip=~`${node:regex}`} |= \"Error rate:\" | regexp `Error rate: (?P<v>[0-9.]+)%` | unwrap v | __error__=\"\" [$__interval]) by (node_ip)",
+          "queryType": "range",
+          "refId": "A",
+          "editorMode": "code",
+          "legendFormat": "{{node_ip}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 5,
+            "spanNulls": 180000,
+            "showPoints": "never"
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 35
+      }
+    },
+    {
+      "type": "row",
+      "title": "Errors",
+      "id": 18,
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 43
+      }
+    },
+    {
+      "type": "bargauge",
+      "title": "Error/warn lines (1h)",
+      "id": 19,
+      "datasource": {
+        "type": "loki",
+        "uid": "efzaru4stjbwgc"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "efzaru4stjbwgc"
+          },
+          "expr": "sum by (node_ip) (count_over_time({job=\"node-oee\", node_ip=~`${node:regex}`} |~ `(?i)\\[(error|warn)` [1h]))",
+          "queryType": "instant",
+          "refId": "A",
+          "editorMode": "code",
+          "legendFormat": "{{node_ip}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "displayName": "${__data.fields.node_ip}",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 50
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {}
+        },
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "node_ip"
+              }
+            ]
+          }
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [],
+          "fields": "",
+          "values": true
+        },
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "showUnfilled": true,
+        "namePlacement": "left",
+        "sizing": "manual",
+        "minVizHeight": 16,
+        "maxVizHeight": 28,
+        "valueMode": "color"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 44
+      }
+    },
+    {
+      "type": "logs",
+      "title": "Error/warn log",
+      "id": 20,
+      "datasource": {
+        "type": "loki",
+        "uid": "efzaru4stjbwgc"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "efzaru4stjbwgc"
+          },
+          "expr": "{job=\"node-oee\", node_ip=~`${node:regex}`} |~ `(?i)\\[(error|warn)`",
+          "queryType": "range",
+          "refId": "A",
+          "editorMode": "code"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true,
+        "enableLogDetails": true,
+        "showLabels": false
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 8,
+        "y": 44
+      }
+    },
+    {
+      "type": "row",
+      "title": "Logs",
+      "id": 21,
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 52
+      }
+    },
+    {
+      "type": "logs",
+      "title": "Live log",
+      "id": 22,
+      "datasource": {
+        "type": "loki",
+        "uid": "efzaru4stjbwgc"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "efzaru4stjbwgc"
+          },
+          "expr": "{job=\"node-oee\", node_ip=~`${node:regex}`}",
+          "queryType": "range",
+          "refId": "A",
+          "editorMode": "code"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true,
+        "enableLogDetails": true,
+        "showLabels": true
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 53
+      }
+    }
+  ]
+}
