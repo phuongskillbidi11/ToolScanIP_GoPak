@@ -5,11 +5,21 @@ REMOTE_LOG="/var/log/isoft-node-oee.log"
 BASE_DIR="/var/lib/node-log-collector"
 STATE_DIR="$BASE_DIR/state"
 LOG_DIR="$BASE_DIR/logs"
+LOCK_FILE="$BASE_DIR/.collector.lock"
+POSITIONS_FILE="$BASE_DIR/promtail-positions.yaml"
 
 mkdir -p "$STATE_DIR" "$LOG_DIR" || {
     echo "Error: cannot create collector directories under $BASE_DIR" >&2
     exit 1
 }
+
+# Refuse to run if another instance is already active — the trim step
+# below truncates files a concurrent run could still be appending to.
+exec 9>"$LOCK_FILE"
+if ! flock -n 9; then
+    echo "Error: another collect-node-logs.sh instance is already running (lock: $LOCK_FILE)" >&2
+    exit 1
+fi
 
 scan_tmp=$(mktemp) || exit 1
 current_ips_tmp=$(mktemp) || {
@@ -177,3 +187,25 @@ done < "$current_ips_tmp"
         rm -f -- "$STATE_DIR/$local_ip.offset" "$LOG_DIR/$local_ip.log"
     fi
 done
+
+# Trim local log files Promtail has fully shipped to Loki — Pi 1 is a
+# relay, not a store; Loki (on the monitoring board) is the single place
+# logs persist. Only trims when Promtail's own tracked position is at or
+# past this file's current size; never trims on a missing/unparseable
+# entry (fail safe, no data loss over a slightly-delayed trim).
+if [ -f "$POSITIONS_FILE" ]; then
+    for local_log in "$LOG_DIR"/*.log; do
+        [ -e "$local_log" ] || continue
+        file_size=$(wc -c < "$local_log")
+        shipped=$(grep -F "$local_log:" "$POSITIONS_FILE" | sed -E 's/.*: *"?([0-9]+)"?.*/\1/')
+        case "$shipped" in
+            ''|*[!0-9]*)
+                continue
+                ;;
+        esac
+        if [ "$file_size" -gt 0 ] && [ "$shipped" -ge "$file_size" ]; then
+            : > "$local_log"
+            echo "Trimmed $local_log (Promtail shipped $shipped/$file_size bytes)" >&2
+        fi
+    done
+fi
